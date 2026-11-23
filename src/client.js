@@ -111,7 +111,8 @@ window.__ModuleLoader__.load({
       invalidNumber: '必须是整数（minPackageChars 可为 0）',
       invalidEmpty: '不能为空',
       errInvalid: '有输入不合法，先修正标红的字段。',
-      errConflict: '设置已在别处被修改（revision 不一致）。为避免覆盖别人的改动，请点「放弃修改」重新读取后再改。',
+      errConflict: '设置已在别处被修改，为避免覆盖别人的改动，这次没有写入。请点「放弃修改」重新读取后再改。',
+      conflictDetail: '（期望 revision {expected}，实际 {actual}）',
       errRejected:
         '宿主拒绝了这次写入：命名空间未注册、或字段不被接受（Config 与页面字段不一致时会这样）。草稿已保留。',
       errSavePrefix: '保存失败：',
@@ -178,7 +179,8 @@ window.__ModuleLoader__.load({
       invalidNumber: 'must be an integer (minPackageChars may be 0)',
       invalidEmpty: 'required',
       errInvalid: 'Some inputs are invalid; fix the highlighted fields first.',
-      errConflict: 'The settings changed elsewhere (revision mismatch). Click "Discard changes" to reload before editing.',
+      errConflict: 'The settings changed elsewhere, so nothing was written (that would overwrite the other change). Click "Discard changes" to reload before editing.',
+      conflictDetail: ' (expected revision {expected}, actual {actual})',
       errRejected:
         'The host refused the write: the namespace is not registered, or a field was not accepted (a page/Config mismatch looks exactly like this). Your draft was kept.',
       errSavePrefix: 'Save failed: ',
@@ -305,6 +307,47 @@ window.__ModuleLoader__.load({
       return JSON.stringify(a) === JSON.stringify(b)
     }
 
+    /** 深拷一份宿主值当基线：快照是只读投影，留着比对「别人有没有改过这个字段」。 */
+    function cloneValue(value) {
+      if (value === null || typeof value !== 'object') return value
+      try {
+        return JSON.parse(JSON.stringify(value))
+      } catch (error) {
+        return value
+      }
+    }
+    /** 标量/对象是否等价（配置值是 JSON 形状，序列化比较够用）。 */
+    function sameValue(a, b) {
+      if (a === b) return true
+      if (a === null || b === null || typeof a !== 'object' || typeof b !== 'object') return false
+      try {
+        return JSON.stringify(a) === JSON.stringify(b)
+      } catch (error) {
+        return false
+      }
+    }
+    /** op.path 对应的清单规格；不是清单路径就返回 undefined。 */
+    function listSpecOfPath(path) {
+      for (let index = 0; index < LISTS.length; index += 1) {
+        const spec = LISTS[index]
+        if (spec.path.length !== path.length) continue
+        let same = true
+        for (let part = 0; part < spec.path.length; part += 1) {
+          if (spec.path[part] !== path[part]) {
+            same = false
+            break
+          }
+        }
+        if (same) return spec
+      }
+      return undefined
+    }
+    /** 错误是否像宿主侧 revision 冲突（两种情况都见过）。 */
+    function looksLikeConflict(error) {
+      const text = describeError(error).toLowerCase()
+      return text.indexOf('settings_conflict') >= 0 || text.indexOf('changed since it was read') >= 0
+    }
+
     /** 把宿主解出的配置值折算成页面草稿。 */
     function readDraft(value) {
       const source = record(value)
@@ -360,6 +403,10 @@ window.__ModuleLoader__.load({
         this.form = ctx.configForms.get(NS)
         this.draft = null
         this.draftRevision = undefined
+        // 基线：seed 时的宿主值快照。冲突判定只比较「本次要写的字段」的基线值与当前值，
+        // 单纯的 revision 变化（插件热挂载 / 配置文档整体重载）不再拦人。
+        this.baseline = null
+        this.baselineRevision = undefined
         this.saving = false
         this.notice = null
         this.conflicted = false
@@ -452,10 +499,14 @@ window.__ModuleLoader__.load({
         if (state === null || state === undefined || state.status !== 'ready') {
           this.draft = null
           this.draftRevision = undefined
+          this.baseline = null
+          this.baselineRevision = undefined
           return
         }
         this.draft = readDraft(state.value)
         this.draftRevision = state.revision
+        this.baseline = cloneValue(state.value)
+        this.baselineRevision = state.revision
       }
 
       /** 丢弃草稿，重新读取宿主值与模型目录（也是冲突后的恢复路径）。 */
@@ -556,6 +607,58 @@ window.__ModuleLoader__.load({
         return errors
       }
 
+      /**
+       * 这个 op 要写的字段，是否已经被别人改过。
+       * 比较「seed 基线值」与「宿主当前值」——revision 变了但值没变不算冲突。
+       */
+      changedElsewhere(op) {
+        const state = this.form.getSnapshot()
+        const current = state === null || state === undefined ? undefined : state.value
+        const spec = listSpecOfPath(op.path)
+        if (spec !== undefined) {
+          const before = projectHostList(at(this.baseline, spec.path), spec.withSystemPrompt)
+          const now = projectHostList(at(current, spec.path), spec.withSystemPrompt)
+          return sameList(before, now) === false
+        }
+        if (this.baseline === null) return false
+        return sameValue(at(this.baseline, op.path), at(current, op.path)) === false
+      }
+
+      /** 冲突文案 + 诊断：期望 revision（seed 时）与实际 revision（现在）。 */
+      conflictText(actual) {
+        const expected = this.baselineRevision
+        const detail = this.t('conflictDetail')
+          .replace('{expected}', expected === undefined ? '?' : String(expected))
+          .replace('{actual}', actual === undefined ? '?' : String(actual))
+        return this.t('errConflict') + detail
+      }
+
+      /** 等 describe 镜像跟上：revision 一变就返回新值；轮次用完返回 undefined。 */
+      async waitForRevision(from, tries, delayMs) {
+        const budget = typeof tries === 'number' && tries > 0 ? tries : 8
+        const pause = typeof delayMs === 'number' && delayMs >= 0 ? delayMs : 25
+        for (let attempt = 0; attempt < budget; attempt += 1) {
+          const state = this.form.getSnapshot()
+          if (state !== null && state !== undefined && state.status === 'ready' && state.revision !== from) return state.revision
+          await new Promise(function (resolve) { setTimeout(resolve, pause) })
+        }
+        const latest = this.form.getSnapshot()
+        if (latest !== null && latest !== undefined && latest.revision !== undefined && latest.revision !== from) return latest.revision
+        return undefined
+      }
+
+      /** 发起一次 mutate，并把「被拒」「传输失败」「像冲突」分开报出来。 */
+      async writeOnce(ops, revision) {
+        try {
+          // 被宿主拒绝时控制器 resolve(false)；传输层错误才 reject。
+          const accepted = await this.form.mutate(ops, revision)
+          if (accepted === false) return { ok: false, rejected: true, conflictLike: false, error: null }
+          return { ok: true, rejected: false, conflictLike: false, error: null }
+        } catch (error) {
+          return { ok: false, rejected: false, conflictLike: looksLikeConflict(error), error: error }
+        }
+      }
+
       /** 草稿 ↔ 宿主值的差异，折算成一次 mutate 的 ops 列表。 */
       plan() {
         const empty = { ops: [], invalid: [] }
@@ -619,9 +722,15 @@ window.__ModuleLoader__.load({
           this.publish()
           return
         }
-        if (this.draftRevision !== undefined && state.revision !== this.draftRevision) {
+        // 字段级冲突判定：只对「本次真正要写」的 path 比较基线值与当前值。
+        // revision 变了但值没变（插件热挂载、配置文档整体重载）不算冲突，继续写。
+        const contested = []
+        for (let index = 0; index < plan.ops.length; index += 1) {
+          if (this.changedElsewhere(plan.ops[index])) contested.push(plan.ops[index].path.join('.'))
+        }
+        if (contested.length > 0) {
           this.conflicted = true
-          this.notice = { tone: 'err', text: this.t('errConflict') }
+          this.notice = { tone: 'err', text: this.conflictText(state.revision) + ' [' + contested.join(', ') + ']' }
           this.publish()
           return
         }
@@ -629,24 +738,41 @@ window.__ModuleLoader__.load({
         this.conflicted = false
         this.notice = null
         this.publish()
-        let accepted = false
-        let failure = null
-        try {
-          // 被宿主拒绝时控制器 resolve(false)；传输层错误才 reject。
-          accepted = (await this.form.mutate(plan.ops, this.draftRevision)) !== false
-        } catch (error) {
-          failure = error
+        // 栅栏用宿主「当前」revision：基线值没被动过，就说明这一批字段仍可安全提交。
+        const attempted = state.revision
+        let outcome = await this.writeOnce(plan.ops, attempted)
+        let revisionMoved = false
+        let lastRevision = attempted
+        if (outcome.ok !== true && (outcome.rejected === true || outcome.conflictLike === true)) {
+          // 宿主侧冲突/拒绝：等镜像给出新 revision，再用同一批 ops 重试一次。
+          const fresh = await this.waitForRevision(attempted, 8, 25)
+          if (fresh !== undefined && fresh !== attempted) revisionMoved = true
+          lastRevision = fresh === undefined ? attempted : fresh
+          if (this.disposed) return
+          outcome = await this.writeOnce(plan.ops, lastRevision)
         }
         if (this.disposed) return
         this.saving = false
-        if (failure !== null) {
-          this.notice = { tone: 'err', text: this.t('errSavePrefix') + describeError(failure) }
-        } else if (accepted !== true) {
-          this.notice = { tone: 'err', text: this.t('errRejected') }
-        } else {
+        if (outcome.ok === true) {
+          // 写入成功必须 re-seed：把草稿与基线/revision 一起更新到写入后的值，
+          // 否则下一次保存会拿旧基线误判冲突。
           this.draft = null
+          this.conflicted = false
+          await this.waitForRevision(attempted, 4, 15)
           this.captureFromForm()
           this.notice = { tone: 'ok', text: this.t('saved') }
+        } else if (outcome.error !== null && outcome.error !== undefined) {
+          this.notice = {
+            tone: 'err',
+            text: outcome.conflictLike === true
+              ? this.conflictText(lastRevision)
+              : this.t('errSavePrefix') + describeError(outcome.error),
+          }
+        } else {
+          this.notice = {
+            tone: 'err',
+            text: this.t('errRejected') + (revisionMoved === true ? this.conflictText(lastRevision) : ''),
+          }
         }
         this.publish()
       }
