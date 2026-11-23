@@ -1,0 +1,30 @@
+# dsh-expert-bridge bundle layer: mount the expert bridge into the composition.
+#
+# The row id doubles as the settings namespace: dsh-settings lists this entry's
+# volatile Config fields under `entry.options.id`, and the browser settings page
+# (src/client.js) reads/writes the very same namespace. Keep them equal.
+#
+# Route lists stay EMPTY here on purpose: real provider/model names never enter
+# the repository. Fill them from the settings page (recommended) or override this
+# block in the profile patch.
+#
+# Path fields are relative to the deployment, so they are left empty for the
+# profile patch to supply.
+- insert:
+    - id: expert-bridge
+      name: dsh-expert-bridge
+      config:
+        experts: []
+        delegates:
+          low: []
+          medium: []
+        maxTokens: 8000
+        timeoutMs: 150000
+        minPackageChars: 600
+        systemPromptFile: ''
+        usageLog: ''
+        debugLog: ''
+        reminder:
+          enabled: true
+          threshold: 47
+          text: '[系统提醒·非用户输入] 本回合你已连续 {n} 次工具调用而没有向用户汇报。先自查是否已满足求助条件（同一症状第 2 次出现 / 曾宣称修好又复现 / 用户说过治标或换过 3 种说法 / 已证伪假设没有新增）。满足就按 CONSULT-TEMPLATE.md 组织求助包后调用 ask_expert；不满足就继续，但别重复同一条路。'
