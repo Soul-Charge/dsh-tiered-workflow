@@ -241,10 +241,10 @@ flowchart TD
 
 由于当前 DSH `web` profile 正通过目录联接（`link:F:/AiHarness/projects/dsh-expert-bridge`）加载本插件，且增删 DSH 插件会触发 profile `node_modules` 重解包，改名按两步执行：
 
-1. **当前阶段（设计定稿期，零运行态风险）**：
+1. **当前阶段（设计定稿期，零运行态风险，已完成远端同步）**：
    * 保持本地目录 `F:/AiHarness/projects/dsh-expert-bridge`、npm 包名 `dsh-expert-bridge` 与 DSH `web` profile 联接不变；
-   * 用户在 GitHub 网页将远端仓库 `Soul-Charge/dsh-expert-bridge` 重命名为 **`Soul-Charge/dsh-tiered-workflow`**；
-   * 随后同步更新本地 `git remote origin` 与 `package.json` 中的 `repository.url`。
+   * GitHub 远端仓库已更名为 **`Soul-Charge/dsh-tiered-workflow`**；
+   * 本地 `git remote origin` 与 `package.json` 中的 `repository.url` 已同步指向新地址。
 2. **V2 正式落地迁移期（Phase 1/2 实施时一次性完成）**：
    * 将本地仓库目录与 `package.json` `name` 统一迁移为 `dsh-tiered-workflow`；
    * 严格按项目 `AGENTS.md` §5/§6 执行：先校验 11 个 profile 包的 md5 基线 → 卸载旧 `link:` 并安装新 `link:` → 核验无补丁丢失 → 同步更新插件档案（`F:/AiHarness/dsh/plugins/`）与 `cordis.patch.yml` → 由用户重启 `dsh web` 验证。
