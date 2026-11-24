@@ -86,8 +86,8 @@ type ModelProfile = {
 |---|---|---|---|
 | **`core-v1`**（默认入口） | 80%+ 日常会话 | **~500 字** | **只保留**：① PTC `run_code` 与异步子代理基本事实；② 四类工具的一句话分工（自己干 / `delegate` / `request_plan` / `ask_expert`）；③ 3 条行为红线（改前先读、易变事实必须一手源否则标 `UNKNOWN`、不可逆操作先问人）。<br>**全部移除**：三分诊长文、R-HELP 规则、求助包格式、自查说教（全部下沉到插件与门禁）。<br>**必带插件**：`time-context`、`agent-instructions`、全套 PTC 工具、本插件。 |
 | **`core-heavy`**（攻坚入口） | 开局即明确是复杂工程/疑难根治时手选 | 同 `core-v1` + 1 句 | 唯一差异：会话启动即标记初始轨道为 **轨 C（规划优先）**，跳过快通道直接走规划闭环。 |
-| **`worker-readonly`**（内部） | 供 `low` 杂活工、Planner、Reviewer 使用 | ~200 字 | 只挂载只读工具（`read` / `grep` / `glob` / `web_search` / `web_fetch`），**不挂载任何写文件或写入型命令工具**。 |
-| **`worker-exec`**（内部） | 供 `medium` 施工子代理使用 | ~200 字 | 挂载标准读写与命令工具；人设只强调「必须带正文和实跑证据收尾」，配合 `dsh-empty-turn-guard` 防空结局。 |
+| **`worker-readonly`**（内部，`order: 90`） | 供 `low` 杂活工、Planner、Reviewer 使用 | ~200 字 + 插件自动注入精简 preamble（~1.5 KB） | 只挂载只读工具（`tool-fs: { read: true, readImage: true, write: false, edit: false }` / `grep` / `glob` / `web_search` / `web_fetch`），**不挂载 shell/写工具，也不挂载 `dsh-agent-instructions`**（每轮立省 ~44 KB 全量 `AGENTS.md` 系统提示）；另由插件 `tools.guard` 按只读 `childId` 集合兜底硬拒继承自全局层的写入/委派工具。 |
+| **`worker-exec`**（内部，`order: 91`） | 供 `medium` 施工子代理使用 | ~200 字 + 插件自动注入精简 preamble（~1.5 KB） | 挂载标准读写与命令工具，不挂全量 `agent-instructions`；由插件自动注入环境事实 preamble 与最小 P0 红线摘要，人设强调必须带正文与实跑证据收尾。 |
 
 ---
 
@@ -103,7 +103,7 @@ flowchart TD
     T -->|"含价格/最新/对比/调研<br/>或触发 web_search / web_fetch"| B["轨 B：调研取证轨<br/>主力 + low 子代理搜一手源 + 维护来源台账"]
     T -->|"选 core-heavy / 显式说先规划<br/>或命中根治/跨模块诊断特征"| C1["轨 C-1：带只读工具规划<br/>主力传目标+线索指针 → Planner 自己读码产出 plan.json"]
 
-    A -->|"命中止损熔断<br/>(连错2次 / 反复改同文件 / 步数≥25 / 用户说不对)"| C1
+    A -->|"命中止损熔断<br/>(连错3次 / 反复改同文件 / 步数≥20 / 用户说不对)"| C1
     A -->|"顺利收敛"| Done["交付给用户"]
 
     C1 --> C2["轨 C-2：按图施工<br/>主力(+ low/medium 子代理)按 plan.json 执行并留存实跑证据"]
@@ -133,10 +133,10 @@ flowchart TD
 #### A. Planner（规划器）—— 同任务内「可续聊 + 轮次上限」
 
 * **工具接口**：`request_plan({ mode: 'new' | 'followup', goal?, pointers?, feedback?, evidence?, depth?: 'normal' | 'deep', need? })`
-* **主力不再手写 600 字求助包**：
-  * 首轮（`mode: 'new'`）：主力只需传入用户原始目标（`goal`）和已知路径/报错线索（`pointers`）。插件以 `worker-readonly` 预设拉起 Planner 子代理，由 Planner **自己读代码、查日志**，并按 JSON Schema 输出 `plan.json`，同时自动渲染可读 `plan.md` 落盘，并将 `plannerChildId` 记入当前任务状态。
-  * 续聊（`mode: 'followup'`）：施工到中途发现新报错或前提不成立时，主力只需传入卡点与实跑输出（`feedback` + `evidence`），插件通过 `subagents.sendMessage` **发回同一个 `plannerChildId`**。
-    * **收益**：① 不必从零重读所有文件，省输入 token 与工具轮次；② 复用前缀上下文，提高 Prompt Cache 命中率；③ 保持第一轮方案取舍的连续性。
+* **主力不再手写 600 字求助包**（基于 V5 实测确立的 **V5-A 契约**）：
+  * **首轮（`mode: 'new'`，同步直返）**：主力只需传入用户原始目标（`goal`）和已知路径/报错线索（`pointers`）。插件以 `worker-readonly` 预设 + `outputSchema: PlanSchema` + `delivery: 'caller'` + `maxDepth: 1` 拉起 Planner 子代理，由 Planner **自己读代码、查日志**，调用 `structured_output` 立即结束（自带 `concludeTurn`，省一轮多余收尾）并同步返回结构化 `plan.json`；插件自动落盘 `plan.md` 并将 `plannerChildId` 记入当前任务状态。
+  * **续聊（`mode: 'followup'`，异步原生回执，避免重复注入）**：施工中途遇阻时，主力传入卡点与实跑输出（`feedback` + `evidence`），插件通过 `subagents.sendMessage` 发回**同一个 `plannerChildId`** 触发 `coldResume`。
+    * *V5 实测约束*：`coldResume` 会完整保留历史对话、`provider/model/reasoningEffort` 与 `worker-readonly` 只读预设，但**不会恢复 `outputSchema` 且 `delivery` 会回落为 `'parent'`**。因此续聊 prompt 要求以 `json` 代码块输出修订版计划，工具立即返回 `{ status: 'followup_dispatched', childId }`，由原生 `subagent-settled` 通知唤醒父会话，同时插件监听 `subagent/end` 自动解析校验并更新 `plan.json`（既吃 Prompt Cache、免重读文件，又彻底避免双份重复注入）。
 * **防思路僵化硬上限**：同一 `plannerChildId` 最多连续追问 **3 轮**（可配置）。超过 3 轮仍未收敛，强制清零重开新窗口并自动将 `depth` 升为 `deep`（仅携带精简的「已证伪结论清单」重新审视现场），打破沉没成本锚定。
 * **`plan.json` 必填四要素**：
   1. `rootCauseOrScope`：根因假设或问题边界界定（禁止只治表象）
@@ -162,11 +162,26 @@ flowchart TD
 | 门禁 | 生效范围 | 阻断条件 | 放行动作 | 解决的痛点 |
 |---|---|---|---|---|
 | **门禁 1 · 规划门禁** | 轨 C | 未生成有效 `plan.json` 前，拦截所有写入/修改型工具（`write`/`edit`/写操作），放行只读探查工具 | 调 `request_plan(mode:'new')` 成功落盘 `plan.json` | 根治不找根因直接表层打补丁（`6c73423f`） |
-| **门禁 2 · 止损熔断门禁** | 全轨道 | 替代原 47 次软提醒：单回合工具调用满阈值（初设 **25 次**），或同文件/同命令连续失败打转时，**硬拒绝下一次普通工具调用** | 调 `request_plan` / `ask_expert` / `ask_user_question` 之一后自动重置计数 | 根治「26 次提醒 0 转化」与单回合 224 次空转 |
-| **门禁 3 · 交付复审门禁** | 轨 B / 轨 C | 未获 `review.json` 通过前，拦截交付动作（`present` / 写最终报告 / 提交前检查）；若主力跳过工具直接纯文本收尾，宿主追加醒目未复审标记 | 调 `request_review` 返回 `pass`（或返工超限后显式带风险说明交付） | 根治混用低质源与主力自审失效（`96e81472`） |
+| **门禁 2 · 止损熔断门禁** | 全轨道 | 对齐全局 `AGENTS.md` §12 熔断标准，替代原 47 次软提醒：单回合工具调用满阈值（初设 **20 次**），或同文件/同命令连续失败 **3 次**打转时，**硬拒绝下一次普通工具调用** | 调 `request_plan` / `ask_expert` / `ask_user_question` 之一后自动重置计数 | 根治「26 次提醒 0 转化」与单回合 224 次空转 |
+| **门禁 3 · 交付复审门禁** | 轨 B / 轨 C | 未获 `review.json` 通过前：① `tools.guard` 拦截交付/落盘动作；② **`agent/turn-stopping` + `agent.steer()` 拦截纯文本直接收尾**（带 `maxResumes: 2` 上限，且 `source.kind` 必须为插件专属名如 `dsh-tiered-workflow-review-gate`，严禁使用 Format v4 禁止的 `"plugin"`） | 调 `request_review` 返回 `pass`（或达重试上限后放行并记入未复审指标） | 根治混用低质源与主力自审失效（`96e81472`） |
 
 **人类逃生阀（Human Override）**：
 * 任意门禁均不锁死用户。用户在对话中明确回复「跳过规划 / 跳过复审 / 直接改」，状态机立刻置位放行并记入观测日志。
+
+---
+
+### 3.6 与全局 `AGENTS.md` 的协同与去重规则
+
+为避免本框架与常驻全局规则（`C:/Users/NaE/.agents/AGENTS.md`，29.6 KB）及项目规则（16.3 KB）叠床架屋或相互打架，确立四条协同边界：
+
+1. **§1 任务分类 & §3 Grill Me 与三轨对齐（防二次确认）**：
+   * 全局「诊断/求助（≤3 步只读，不 Grill）」→ 主力先做 ≤3 步探查；定位且小改走轨 A，3 步未定根因或需根治自动进轨 C 调 `request_plan`；
+   * 全局「问答（含价格/最新/对比）」→ 轨 B（一手源台账 + 独立复审）；
+   * 全局「执行任务（小改）」→ 轨 A，按 §3 简短确认后施工；
+   * 全局「执行任务（复杂/跨文件）」→ 轨 C，**由 Planner 产出的 `plan.md`（含验收标准）直接作为 §3.3 的分析方案交用户一次确认开工**，绝不“先被弱主力 Grill 一轮、同意后再被 Planner 规划一轮”。
+2. **§12 止损熔断（P0）机械化**：门禁 2 直接执行 §12 口径（连续失败 3 次 / 单回合 20 次工具调用 / 观测单步思考暴涨），不再维护两套不同数字。
+3. **§13.5 子代理环境 preamble 自动注入**：由插件在拉起子代理时自动读取并前置精简版 `subagent-task-preamble`（~1.5 KB）与最小 P0 安全摘要，替代让弱主力手动抄写，同时内部子代理预设不挂载全量 `dsh-agent-instructions`（立省 ~44 KB/轮）。
+4. **§7 产物落点一致**：人类可读 `plan.md` 写入任务锚点目录 `tasks/<任务名>/`；插件状态与观测流水账落在 `$DSH_HOME/storages/`，不污染工作区根目录。
 
 ---
 
@@ -193,8 +208,10 @@ flowchart TD
 
 ### 4.2 观测流水账（`workflow-metrics.jsonl`）
 
-顺手修复现有 `expert-usage.jsonl` 中 `finish` 记为 `"[object Object]"` 的缺陷，并升级为全链路观测：
-* **角色级明细**：每次 `request_plan` / `request_review` / `delegate` / `ask_expert` 记录：`sessionId`、角色、档位名、`provider/model`、`reasoningEffort`、是否续聊、`inputTokens`、`cachedTokens`（若提供）、`outputTokens`、耗时 `ms`、`finishReason`。
+顺手修复现有 `expert-usage.jsonl` 中两处已定位缺陷：① `finish` 记为 `"[object Object]"`（应取 `finish.reason.kind`）；② 漏记 `cacheReadTokens` / `cacheWriteTokens` / `reasoningTokens`（`dsh-llm` 中 `TokenUsage` 为互斥计数，`inputTokens` 仅为未缓存输入，这是此前 `totokens-claude-anthropic` 显示 `inputTokens: 1` 的根因）。
+
+V2 通过全局 `ctx.on('session/event', ...)` 实时采集父子整树（按 `session.header.parentSession` 归属到同一根会话），零读盘落盘全链路指标：
+* **角色级明细**：每次 `request_plan` / `request_review` / `delegate` / `ask_expert` 记录：`sessionId`、`rootSessionId`、角色、档位名、`provider/model`、`reasoningEffort`、是否续聊、完整 6 维 token（`inputTokens`、`cacheReadTokens`、`cacheWriteTokens`、`outputTokens`、`reasoningTokens`、`totalTokens`）、耗时 `ms`、`finishReason`（`kind`）。
 * **会话级汇总**：所走轨道（A/B/C）、是否中途升档、门禁触发与放行次数、复审首轮通过率、主力总步数与思考字符数、同一任务内**用户纠正/追问轮次**。
 
 ### 4.3 完工后的实测验收方案（替代失效的 19 分短考卷）
@@ -210,22 +227,17 @@ flowchart TD
 
 ---
 
-## 5. 平台底层核查与落地前技术探针（V1–V5）
+## 5. 平台底层探针实测结论（V1–V5 已完成）
 
-已通过核查 DSH `0.2.1-rc.2` 源码确认的事实：
-* `dsh-tools/lib/index.js:1431`：PTC 模式下 `run_code` 内每一次 `tools.xxx` 嵌套调用都会经过 `scheduler.prepare` → `guardReason`，被拒时抛出异常回 `run_code`。
-* `dsh-subagent/lib/types/types.d.ts:25-38, 127-174`：`startActivation` 接口原生声明了 `agentPreset`、`outputSchema`、`maxDepth` 与 `delivery: 'parent' | 'caller'`。
-* `dsh-subagent/lib/types/manager.d.ts:100-110`：`SubagentManager` 原生支持本地 `continuable child` 的 `sendMessage` 与 `coldResume`。
+> 完整实测证据、源码行号与独立隔离运行时探针输出见 [docs/PLATFORM-PROBES.md](PLATFORM-PROBES.md)（全部基于本机真实 DSH `0.2.1-rc.2` 核心栈运行通过，exit code 0）。
 
-**正式编码前必须先用最小脚本实测以下 5 项运行时假设（任何一项不通均已预设降级路径）**：
-
-| 编号 | 待实测项 | 若实测不通的降级方案 |
-|---|---|---|
-| **V1** | 插件直调 `ctx.subagents.startActivation('spawn')` 能否绕过内置 `allowedModels` 并正常驱动 `totokens-claude-anthropic`（opus）；核实 `deepseek-official` 与 `deepseek-account` 差异 | 若某路由无法走 `spawn`，Planner 降级为「插件自动打包指定文件片段 + `llm.stream` 单轮结构化输出」 |
-| **V2** | 本机 `0.2.1-rc.2` 的 `spawn` provider 对 `agentPreset` + `outputSchema` + `delivery: 'caller'` 的组合支持度 | 不支持 `agentPreset` → 用 `tools.guard` 按 `childId` 硬禁写入工具（同样实现真只读）；不支持 `outputSchema` → JSON 代码块提取 + 插件侧 schema 校验 |
-| **V3** | PTC 模式下 `tools.guard` 硬拒绝抛回 `run_code` 后，现役主力（`deepseek-v4.1-flash`）是按拒绝文案转调 `request_plan`，还是在 `run_code` 内死循环重试 | 若连续被拒 ≥2 次仍重试，插件直接触发 `concludeTurn` 交还控制权并向用户亮明卡点 |
-| **V4** | 轨 B/C 下如何拦住「主力不调 `present`、直接纯文本收尾跳过复审」 | 检查 DSH 是否提供 `turn/pre-end` 钩子；若无，则门禁卡在落盘交付物/提交前，并在未复审终态输出状态提示 |
-| **V5** | `spawn` 子代理首轮结束后，经 `sendMessage` 冷恢复续聊时如何同步拿到第二轮结果，以及父子会话 token 记账字段的完整采集路径 | 若 `delivery: 'caller'` 与续聊冲突，改为监听 `subagent/end` 事件封装成同步工具返回，并从子会话日志采集精确 usage |
+| 编号 | 验证项 | 实测结论 | 敲定的工程方案 |
+|---|---|---|---|
+| **V1** | `spawn` 绕过 `allowedModels`、`reasoningEffort` 透传、`deepseek-official` 核查 | **✅ 已证实**（`allowedModels` 仅约束官方内置 `dsh-tool-subagent`；`deepseek-official` 是官方 `@deepseek-ai/dsh-llm-deepseek-api-key` 合法 provider） | 插件角色池独立驱动 `startActivation('spawn')` 并原样透传 `reasoningEffort`；*外部中转端多步工具稳定性与密钥可用性留待 Phase 1 实网冒烟确认* |
+| **V2** | `spawn` 的 `agentPreset` + `outputSchema` + `maxDepth: 1` + `delivery: 'caller'` 组合 | **✅ 已证实（含 2 项修正）**（全量 4 能力均可用，`structured_output` 自带 `concludeTurn`；但子代理仍继承全局工具，且 preset 无 `hidden` 字段） | 采用「`worker-readonly`（`order: 90`，`tool-fs` 禁写，不挂 `agent-instructions`）+ `tools.guard` 按只读 `childId` 兜底禁全局写工具」双保险 |
+| **V3** | PTC 模式下 `tools.guard` 硬拒绝传播路径 | **✅ 已证实**（拒绝文案原样以 `ToolCallError: <文案>` 抛入 `run_code`，未捕获与 `try/catch` 均完整保留） | 拒绝文案写成明确下一步工具指令，并配连续被拒计数；*主力 `deepseek-v4.1-flash` 的实际服从率留待 Phase 1 实网观测* |
+| **V4** | 拦截主力不调交付工具、直接纯文本跳过复审 | **✅ 已证实（避开 Format v4 雷区）**（`agent/turn-stopping` + `agent.steer()` 原生可靠拉回且上限防死循环；Format v4 严禁 `source.kind: "plugin"`） | 门禁 3 结合 `tools.guard` + `agent/turn-stopping`（`maxResumes: 2`），所有注入消息使用专属 `source.kind` |
+| **V5** | Planner 持久化 `coldResume` 续聊 + 全链路 6 维 Token 采集 | **✅ 已证实（含 3 项关键定案）**（`coldResume` 保留历史/路由/预设，但**不恢复 `outputSchema` 且 `delivery` 回落 `'parent'`**；`session/event` 实时可采 6 维互斥 `TokenUsage`） | 采用 **V5-A**：首轮同步直返 `structured`；续聊异步派发，经原生 `subagent-settled` 唤醒父会话并由 `subagent/end` 更新 `plan.json`；全树 6 维 token 实时记账 |
 
 ---
 

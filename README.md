@@ -1,6 +1,6 @@
 # dsh-expert-bridge
 
-> **V2 演进蓝图（计划更名为 `dsh-tiered-workflow`）**：基于生产实测（26 次提醒 → 0 次主动求助），本插件正从「单点专家求助桥」演进为「模型 × 推理强度分档 + 三轨工作流 + 宿主硬门禁」的完整分工框架，详见 [docs/WORKFLOW-ARCHITECTURE.md](docs/WORKFLOW-ARCHITECTURE.md)。当前运行态（`0.2.x`）仍维持原包名与接口不变。
+> **V2 演进蓝图（仓库已更名为 `dsh-tiered-workflow`）**：基于生产实测（26 次提醒 → 0 次主动求助），本插件正从「单点专家求助桥」演进为「模型 × 推理强度分档 + 三轨工作流 + 宿主硬门禁」的完整分工框架。详见架构设计 [docs/WORKFLOW-ARCHITECTURE.md](docs/WORKFLOW-ARCHITECTURE.md) 与 DSH 底层探针实测报告 [docs/PLATFORM-PROBES.md](docs/PLATFORM-PROBES.md)。当前本地运行态（`0.2.x`）仍维持原目录与包名不变，留待 V2 实施时一次性迁移。
 
 给弱模型一个「卡住就问专家」的通道，一条长尾试错的硬提醒，以及一个**按能力分档派子代理**的入口。DSH 插件包（MIT），带浏览器设置页。
 
