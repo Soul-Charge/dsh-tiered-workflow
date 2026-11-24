@@ -1,8 +1,8 @@
 {
   "name": "dsh-expert-bridge",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
-  "description": "DSH plugin: ask a stronger expert model about a stuck problem (sync), dispatch low/medium tier subagents for chores, and nudge long-tail tool loops. Settings page included.",
+  "description": "DSH plugin (dsh-tiered-workflow): tiered multi-model workflow with model x reasoningEffort profiles, continuable readonly planner, fresh reviewer, host-level hard gates, 6-field token metrics, ExternalBackendAdapter v1 port, and Web settings GUI.",
   "type": "module",
   "main": "src/index.js",
   "exports": {
@@ -29,9 +29,14 @@
   "files": [
     "src",
     "docs",
+    "presets",
     "cordis.patch.yml",
     "README.md"
   ],
+  "scripts": {
+    "test": "node --test test/unit.test.mjs",
+    "test:integration": "node --test test/dsh-integration.test.mjs"
+  },
   "license": "MIT",
   "repository": {
     "type": "git",

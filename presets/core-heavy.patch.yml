@@ -1,0 +1,121 @@
+# core-heavy — 攻坚规划优先入口（会话一启动即锁定轨 C：先调 request_plan 再动代码）
+# 用法：与 core-v1 一同合入 $DSH_HOME/profiles/web/cordis.patch.yml。
+- insert:
+    - id: preset-core-heavy
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: core-heavy
+        name: "攻坚主力 · 规划优先"
+        description: "复杂重构/疑难根治专用入口：启动即进入轨 C，先由只读规划器产出 plan.json，经确认后施工并过独立复审。"
+        order: 5
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: |
+                你由 {{model}} 驱动。本会话为 PTC 模式（仅能直接调用 `run_code`），且**已启用攻坚规划优先模式（轨 C）**。
+
+                [强制流程]
+                1. 写入任何代码或配置之前，必须先做轻量只读线索确认并调用 `request_plan({ mode: "new", goal, pointers })`，拿到结构化 `plan.json` 与 `plan.md`。
+                2. 将规划方案与验收清单呈报用户确认后，严格按 `plan.json` 施工（独立子活可派 `delegate`）。
+                3. 施工中若前提推翻或遇阻，调 `request_plan({ mode: "followup", feedback, evidence })` 续聊修订。
+                4. 交付前必须调 `request_review({ scope: "engineering", summary, artifactPaths, commandEvidence })` 通过独立复审。
+
+                [三条底线]
+                1. 改前先读；只改职责内文件，不做顺手优化。
+                2. 易变事实只认一手官方源；二手明标「二手，待核实」；无一手写 UNKNOWN。
+                3. 不可逆操作先问用户；收尾必带正文与实跑证据。
+
+          - id: agent-instructions
+            name: '@deepseek-ai/dsh-agent-instructions'
+            config:
+              maxBytes: 65536
+
+          - id: time-context
+            name: '@deepseek-ai/dsh-time-context'
+
+          - id: tool-bash
+            name: '@deepseek-ai/dsh-tool-bash'
+            disabled: !!js process.platform === 'win32'
+
+          - id: tool-pwsh
+            name: '@deepseek-ai/dsh-tool-pwsh'
+            disabled: !!js process.platform !== 'win32'
+
+          - id: tool-fs
+            name: '@deepseek-ai/dsh-tool-fs'
+
+          - id: tool-fs-search
+            name: '@deepseek-ai/dsh-tool-fs-search'
+            config:
+              sampleOverCapGlobResults: false
+
+          - id: tool-jobs
+            name: '@deepseek-ai/dsh-tool-jobs'
+
+          - id: skill-filesystem
+            name: '@deepseek-ai/dsh-skill-filesystem'
+
+          - id: tool-skill
+            name: '@deepseek-ai/dsh-tool-skill'
+
+          - id: command-goal
+            name: '@deepseek-ai/dsh-command-goal'
+
+          - id: tool-goal
+            name: '@deepseek-ai/dsh-tool-goal'
+
+          - id: compaction
+            name: cordis:group
+            group: true
+            isolate:
+              compaction: true
+              toolResultPruner: true
+            config:
+              - id: compaction-basic
+                name: '@deepseek-ai/dsh-compaction-basic'
+              - id: command-compact
+                name: '@deepseek-ai/dsh-command-compact'
+              - id: tool-result-pruner
+                name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+                config:
+                  thresholdChars: 8192
+                  headChars: 4096
+                  tailChars: 1024
+
+          - id: delegation
+            name: cordis:group
+            group: true
+            isolate:
+              workflowEngine: true
+            config:
+              - id: tool-subagent-control
+                name: '@deepseek-ai/dsh-tool-subagent-control'
+              - id: tool-subagent-list-agents
+                name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'
+              - id: tool-subagent
+                name: '@deepseek-ai/dsh-tool-subagent'
+                config:
+                  provider: spawn
+                  toolName: subagent
+                  modelSelectionSettings: true
+                  backgroundMode: continuable
+
+          - id: tool-ask-user
+            name: '@deepseek-ai/dsh-tool-ask-user'
+
+          - id: tool-todo
+            name: '@deepseek-ai/dsh-tool-todo'
+            config:
+              allowParallelInProgress: true
+
+          - id: tool-web
+            name: '@deepseek-ai/dsh-tool-web'
+            config:
+              fetch: true
+              searchTimeoutMs: 60000
+
+          - id: tool-presentation
+            name: '@deepseek-ai/dsh-agent-tool-presentation'
+            config:
+              mode: ptc

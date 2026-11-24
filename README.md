@@ -1,121 +1,81 @@
-# dsh-expert-bridge
+# dsh-tiered-workflow（compat package: `dsh-expert-bridge`）
 
-> **V2 演进蓝图（仓库已更名为 `dsh-tiered-workflow`）**：基于生产实测（26 次提醒 → 0 次主动求助），本插件正从「单点专家求助桥」演进为「模型 × 推理强度分档 + 三轨工作流 + 宿主硬门禁」的完整分工框架。详见架构设计 [docs/WORKFLOW-ARCHITECTURE.md](docs/WORKFLOW-ARCHITECTURE.md) 与 DSH 底层探针实测报告 [docs/PLATFORM-PROBES.md](docs/PLATFORM-PROBES.md)。当前本地运行态（`0.2.x`）仍维持原目录与包名不变，留待 V2 实施时一次性迁移。
+> 仓库已更名为 **`dsh-tiered-workflow`**；为兼容当前 DSH `web` profile 联接，npm 包名与设置命名空间暂保持 `dsh-expert-bridge` / `expert-bridge`，支持从 `0.2.x` 零配置破坏平滑升级。
 
-给弱模型一个「卡住就问专家」的通道，一条长尾试错的硬提醒，以及一个**按能力分档派子代理**的入口。DSH 插件包（MIT），带浏览器设置页。
+面向 DSH `>= 0.2.1-rc.2`（PTC 模式）的**低预算多模型分档分工与宿主级硬门禁工作流插件**（MIT，含 Web 设置页）。
 
-## 它解决什么问题
+* 完整架构蓝图：[docs/WORKFLOW-ARCHITECTURE.md](docs/WORKFLOW-ARCHITECTURE.md)
+* DSH `0.2.1-rc.2` 底层探针实测报告：[docs/PLATFORM-PROBES.md](docs/PLATFORM-PROBES.md)
+* 踩坑备忘：[docs/PITFALLS.md](docs/PITFALLS.md) · GUI 说明：[docs/GUI.md](docs/GUI.md)
 
-小模型跑长任务时有三种典型浪费：
+---
 
-1. **该问不问**——已经试了十几次还在同一条路上，直到人手动把问题搬到更强的模型那里；
-2. **问得太贵**——把整套子代理体系（人设 + 几十个工具 schema）搬给专家，一次咨询先付三万 token；
-3. **杂活也用主力**——改个错字、翻一遍目录、摘一段日志，也拿最贵的模型跑。
+## 核心能力（`0.3.0`）
 
-这个插件把三件事分开：**咨询**做成一次裸 LLM 调用（专家只读你粘贴的求助包，没有工具、看不到文件）；**触发**做成 harness 侧的硬提醒（工具调用计数 → 注入一条提醒）；**分档干活**做成两个可配置的子代理池（低档做杂活，中档能力接近主力）。
+| 能力 | 工具 / 机制 | 说明 |
+|---|---|---|
+| **一模多档角色池** | `planners` / `reviewers` / `experts` / `delegates.low` / `delegates.medium` | 同一模型可配多条不同 `reasoningEffort`、`tier`（`standard`/`deep`）、`tags` 与执行后端 `backend`（默认 `dsh-spawn`，可热插拔外部后端） |
+| **带只读工具规划器** | `request_plan({ mode: 'new'\|'followup', ... })` | 首轮 `delivery:'caller'` + `outputSchema` 同步产出 `plan.json`/`plan.md`；同任务续聊走 `coldResume`（V5-A 异步回执自动更新 `plan.json`），超 3 轮自动清零重开并升档 `deep` |
+| **独立新鲜只读复审** | `request_review({ scope, summary, ... })` | 轨 B 先跑零成本 URL/二手源预检，再由新鲜只读子代理核查；轨 C 对照 `plan.json` 验收清单与实跑证据逐项打分 |
+| **三道宿主级硬门禁** | `tools.guard` + `agent/turn-stopping` | ① 规划门禁（轨 C 未规划禁写）；② §12 止损熔断（默认 20 步或连错 3 次硬阻断）；③ 交付复审门禁（拦 `present` 与纯文本直接收尾，带 `maxReviewRetries` 上限与专属 `source.kind`）；全门禁支持人类逃生阀（回复「跳过规划/复审/门禁」立即放行） |
+| **只读子代理双保险** | `worker-readonly` 预设 + `readonlyChildIds` 守卫 | 预设物理禁写并省去 46 KB 全量 `AGENTS.md`（插件自动注入 ~1.5 KB 精简 preamble），同时宿主 `tools.guard` 按预分配 `childId` 兜底硬拒继承自全局层的写工具 |
+| **通用外部后端适配口** | Cordis 服务 `tieredWorkflow.registerBackend(adapter)` + 动态工具 `dispatch_external` | 严格遵循 `ExternalBackendAdapter` v1 契约，可热插拔接入独立插件（如 [dsh-antigravity-adapter](https://github.com/Soul-Charge/dsh-antigravity-adapter)），支持 `run` 与 `handoff` 人工交棒 |
+| **6 维全树实时记账** | 全局 `session/event` → `workflow-metrics.jsonl` | 实时聚合父会话 + 所有子代理 + 外部后端的 6 维互斥 `TokenUsage`（`inputTokens`/`cacheReadTokens`/`cacheWriteTokens`/`outputTokens`/`reasoningTokens`/`totalTokens`），并修复 `finish.reason.kind` |
+| **兼容旧工具** | `ask_expert` / `delegate` | 100% 兼容 `0.2.x` 配置与调用方式，增强一模多档、`worker-readonly`/`worker-exec` 预设自动挂载与精简 preamble 自动前置 |
 
-## 三个能力
+---
 
-| 能力 | 实现 | 说明 |
-| --- | --- | --- |
-| `ask_expert(package, need?)` | `ctx.llm.stream` 裸调用 | 同步返回纯文本建议；专家无工具、看不到文件；缺字段直接拒绝；可按标签选专家 |
-| `delegate(tier, task, need?, description?)` | `subagents.startActivation` | 异步派子代理，立即返回子会话 id；`low` 只读软约束、`medium` 可读写 |
-| 长尾提醒 | `ctx.tools.guard` 计数 + `agent.inject` | 同一回合连续 N 次工具调用后注入一条提醒，新回合归零 |
+## 仓库目录结构
 
-## 安装
+```text
+src/
+  index.js           # Cordis 命名导出入口（无 export default），挂载模块并 provide('tieredWorkflow')
+  config.js          # schemastery Config（兼容 0.2.x）与一模多档 pickProfile 选路器
+  backends.js        # ExternalBackendAdapter v1 校验与注册表
+  state.js           # 会话级三轨状态机（A/B/C 快筛、纠偏升档、逃生阀、§12 计数与持久化）
+  metrics.js         # 6 维互斥 TokenUsage 采集与 workflow-metrics.jsonl 记账
+  prompts.js         # 精简 preamble、Plan/Review JSON Schema、提示词构造与 JSON 代码块降级抽取
+  research-check.js  # 轨 B 零成本来源分级代码预检
+  runner.js          # dsh-spawn（V5-A）与外部后端统一执行器
+  gates.js           # 三道宿主硬门禁 + 只读子代理 0 号兜底守卫
+  tools.js           # 5 个工作流工具注册（含 dispatch_external 动态显隐）
+  client.js          # Web GUI 设置页（5 张角色档位表 + 工作流与硬门禁开关/阈值）
+presets/
+  core-v1.patch.yml          # 日常极简主力基座预设（~480 字）
+  core-heavy.patch.yml       # 攻坚规划优先入口（初始锁定轨 C）
+  worker-readonly.patch.yml  # 内部只读子代理预设（order: 90，省 46 KB AGENTS.md）
+  worker-exec.patch.yml      # 内部施工子代理预设（order: 91）
+test/
+  unit.test.mjs              # 纯逻辑 + 假宿主设置页单元测试
+  dsh-integration.test.mjs   # 基于真实 DSH 0.2.1-rc.2 核心栈的端到端隔离集成测试
+```
 
-1. 把本仓库装进 profile（`link:` 用 **Windows 绝对路径**）：
+---
 
+## 安装与部署
+
+1. 将本仓库装入 profile（`link:` 必须使用 **Windows 绝对路径**）：
    ```powershell
    dsh plugin --profile web add link:F:/AiHarness/projects/dsh-expert-bridge
    ```
-
-   这会同时写 profile `package.json` 的 `dependencies` 与 `dsh.profile.bundles`，并挂上包内 `cordis.patch.yml` 的 `expert-bridge` 行。
-
-   > **新机器克隆后必须先建依赖联接**。本包从**自己目录**解析 `@deepseek-ai/schemastery`，仓库里不放 `node_modules`（`.gitignore` 已忽略）；缺这个联接时 `import()` 整包直接报 `ERR_MODULE_NOT_FOUND`（实测）。建法：
-   >
+   > 首次克隆需建立 `@deepseek-ai/schemastery` 目录联接：
    > ```powershell
-   > New-Item -ItemType Junction -Path 'F:/AiHarness/projects/dsh-expert-bridge/node_modules/@deepseek-ai/schemastery' `
+   > New-Item -ItemType Directory -Force 'F:/AiHarness/projects/dsh-expert-bridge/node_modules/@deepseek-ai'
+   > New-Item -ItemType Junction `
+   >   -Path 'F:/AiHarness/projects/dsh-expert-bridge/node_modules/@deepseek-ai/schemastery' `
    >   -Target 'C:/Program Files/nvm/v24.18.1/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/schemastery'
    > ```
-   >
-   > 建好后应能验证：`node --input-type=module -e "console.log(typeof (await import('file:///.../src/index.js')).Config)"` 输出 `function`。
+2. （推荐）将 `presets/*.patch.yml` 按需合入 `$DSH_HOME/profiles/web/cordis.patch.yml`，并在 `expert-bridge` 配置行补全路径字段（`workflow.stateDir`、`workflow.metricsLog`、`workflow.preambleFile`、`usageLog`、`debugLog`）。
+3. 重启 `dsh web` 后，打开 **「设置 → 分层工作流」** 配置各角色档位池（支持同一模型配多条不同 `reasoningEffort` 与 `standard`/`deep` 档位）与硬门禁阈值。
 
-2. 在 profile 的 `cordis.patch.yml` 里给这一行补上部署相关字段（路径、提醒文案），模型路由留空、交给设置页：
-
-   ```yaml
-   - insert:
-       - id: expert-bridge
-         name: dsh-expert-bridge
-         config:
-           systemPromptFile: '<ABSOLUTE_PATH>/src/CONSULTANT-SYSTEM.md'
-           usageLog: '<DSH_HOME>/storages/expert-usage.jsonl'
-           debugLog: '<DSH_HOME>/storages/expert-bridge-debug.log'
-   ```
-
-3. 打开 Web GUI 的「设置 → 专家桥（expert-bridge）」，在**专家列表 / 低档子代理 / 中档子代理**里各加一条（provider + model 必填，模型选项来自 DSH 当前可路由模型目录）。保存会写回 profile patch。
-
-4. 宿主级插件行改完即生效（热重载），**新装插件包或改包内代码需要重启 `dsh web`**；preset 内的插件行不会热生效。
-
-> ⚠️ 从旧版（`file://` 直接挂 `.mjs`）升级时，**必须删掉旧的 `file://` 行**。两条行同时存在会注册两个同名 `ask_expert`，宿主直接报重复工具。
-
-## 配置（settings namespace = profile 条目 id = `expert-bridge`）
-
-| 键 | 默认 | 设置页可写 | 含义 |
-| --- | --- | --- | --- |
-| `experts[]` | `[]` | ✅ 整数组 | 专家列表：`{name, provider, model, reasoningEffort, tags[], note, systemPrompt}` |
-| `delegates.low[]` | `[]` | ✅ 整数组 | 低档子代理池（只读软约束），形状同上但无 `systemPrompt` |
-| `delegates.medium[]` | `[]` | ✅ 整数组 | 中档子代理池（可读写） |
-| `maxTokens` | 8000 | ✅ | 专家答复上限 |
-| `timeoutMs` | 150000 | ✅ | 单次咨询超时 |
-| `minPackageChars` | 600 | ✅ | 求助包最小长度，低于即拒绝 |
-| `reminder.enabled` | true | ✅ | 长尾提醒开关 |
-| `reminder.threshold` | 47 | ✅ | 连续多少次工具调用后提醒 |
-| `systemPromptFile` | 空 | ❌ 走 patch | 专家端全局系统提示（含退回规则） |
-| `usageLog` | 空 | ❌ 走 patch | JSONL 记账 |
-| `debugLog` | 空 | ❌ 走 patch | 每行 `tool=… count=… bucket=… inExpert=…` |
-| `reminder.text` | 内置文案 | ❌ 走 patch | `{n}` 会替换成当前计数 |
-
-**代码里没有任何写死的 provider/model**；执行者模型在运行时从 `agent.session.requestHeader()` 读取，只用于记账与「自己就是专家时跳过」。路由列表整数组保存（设置页整表替换），volatile 叶子每次调用重新读取，所以设置页保存后立即生效，不用重启。
-
-## 两个工具怎么用
-
-### `ask_expert({ package, need? })`
-
-1. 填 `docs/CONSULT-TEMPLATE.md`：第几次 / 根治定义 / 已证伪假设≥2 条 / 一个问题；
-2. 结构缺项会被拒绝（`minPackageChars` + 四类正则）；
-3. `need` 给了就在专家列表里按 `tags` 匹配（大小写不敏感），没命中或没给就用第一条可用的；返回里有 `matched` 告诉你是否命中；
-4. 返回：`answer` / `expert`（名称或 `provider/model`）/ `truncated` / `matched` / `need` / 可选 usage。
-
-### `delegate({ tier, task, need?, description? })`
-
-- `tier:"low"`：便宜模型。**只读是软约束**——工具描述与子代理 prompt 都要求它只读（读文件、搜索、看只读命令输出；禁止写文件、改配置、跑写入型命令），但它**不是**沙箱强制隔离。重要改动自己复核。
-- `tier:"medium"`：能力接近主力的模型，可以读写文件，适合边界清楚、一次能讲完的子任务。
-- 立即返回 `{ kind:"activation", subagentId, tier, provider, model }`；子代理异步跑完，宿主把完成通知送回父会话。
-- 子代理看不到你当前会话的历史，`task` 要写全：目标、边界、交付物、验收标准。
-- `need` 按 `tags` 在该档模型池里挑；不填就用该档第一条。
+---
 
 ## 验证
 
-- `node --check src/index.js` 通过；
-- `Config` 用真实 schemastery 跑过：默认值正确、样例配置被接受、非法数组被拒（`$.experts expected array`）；
-- 26 项工具级冒烟（假 ctx + 假 llm + 假 subagents）：结构校验、need 选路、跳过自身、空列表报错、`startActivation` 参数形状、只读前置、非法 tier、guard 计数与提醒、guard 不抛错——全绿；
-- 真实链路验证：装上后在设置页配好路由，调 `ask_expert` 应同步返回并在 `usageLog` 多一行；调 `delegate` 应返回子会话 id，子代理结束后父会话收到通知。
-
-## 为什么是插件，不是"让子代理去问"
-
-- 子代理继承父会话的整套人设与工具 schema，一次咨询首轮就三万多 token，而专家只需要读你那段求助包；
-- 子代理是**异步**的，咨询这种交互，同步更顺（所以咨询走 `ask_expert`，干活走 `delegate`）；
-- 只有 harness 侧的计数与注入，才能把"该问"从软约束变成硬信号。
-
-## 已知坑
-
-见 [docs/PITFALLS.md](docs/PITFALLS.md)。最容易踩的四条：
-
-1. **设置命名空间必须等于 profile 条目 id**（`expert-bridge`），否则设置页显示"宿主未提供设置命名空间"；
-2. 插件从**自身目录**解析 `@deepseek-ai/schemastery`：仓库里没有 `node_modules` 时，`import()` 整包直接报 `ERR_MODULE_NOT_FOUND`（实测），宿主也就起不来——部署前必须按「安装」一节建好那个目录联接；
-3. `volatile` 不能嵌套 `volatile`，也不能标在数组元素上；要整数组可写就 `z.array(X).default([]).volatile()`；
-4. `parameters` / `output.schema` 必须是标准 JSON Schema，对象级 `required: []`，别在属性上写 `required: true`。
+```powershell
+npm test                   # 9/9 单元测试（Config/选路/后端契约/6维记账/状态机/来源预检/GUI 设置页）
+npm run test:integration   # 真实 DSH 0.2.1-rc.2 核心栈端到端隔离集成测试（E2E-1 ~ E2E-7 全绿）
+```
 
 ## License
 

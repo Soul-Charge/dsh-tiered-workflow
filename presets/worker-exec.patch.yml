@@ -1,0 +1,50 @@
+# worker-exec — 内部施工子代理预设（供 medium 档 delegate 使用）
+# 刻意不挂载全量 dsh-agent-instructions，由插件自动前置精简环境事实 preamble + 最小 P0 安全摘要，节省 ~44 KB/轮系统提示。
+- insert:
+    - id: preset-worker-exec
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: worker-exec
+        name: "[内部] 施工子代理"
+        description: "内部执行预设（供中档 delegate 子代理使用），极简人设、完整读写与测试工具。"
+        order: 91
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: |
+                你是 {{model}} 驱动的独立施工子代理。严格围绕任务书目标与边界执行，不做范围外顺手优化。
+                改前先读；不可逆操作（物理删除、force push、重启服务）禁止自行执行。
+                收尾必须包含可见正文与实跑证据（修改文件清单、运行命令与结果摘要）；只有思考没有正文视为未完成。
+              complete: true
+              includeRuntimeContext: false
+
+          - id: time-context
+            name: '@deepseek-ai/dsh-time-context'
+
+          - id: tool-bash
+            name: '@deepseek-ai/dsh-tool-bash'
+            disabled: !!js process.platform === 'win32'
+
+          - id: tool-pwsh
+            name: '@deepseek-ai/dsh-tool-pwsh'
+            disabled: !!js process.platform !== 'win32'
+
+          - id: tool-fs
+            name: '@deepseek-ai/dsh-tool-fs'
+
+          - id: tool-fs-search
+            name: '@deepseek-ai/dsh-tool-fs-search'
+            config:
+              sampleOverCapGlobResults: false
+
+          - id: tool-web
+            name: '@deepseek-ai/dsh-tool-web'
+            config:
+              fetch: true
+              searchTimeoutMs: 60000
+
+          - id: tool-presentation
+            name: '@deepseek-ai/dsh-agent-tool-presentation'
+            config:
+              mode: ptc

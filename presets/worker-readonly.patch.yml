@@ -1,0 +1,50 @@
+# worker-readonly — 内部只读子代理预设（供 Planner / Reviewer / low 杂活工使用）
+# 关键设计（经 V2/V6 探针证实）：
+#  1. tool-fs 细粒度禁写（write: false, edit: false），不挂载 shell 工具，实现工具面物理只读；
+#  2. 刻意不挂载 dsh-agent-instructions（省掉 46 KB 全量 AGENTS.md 输入），由插件自动注入 ~1.5 KB 精简 preamble；
+#  3. 配合插件 tools.guard 按只读 childId 集合兜底硬拒继承自全局层的写入/委派工具。
+- insert:
+    - id: preset-worker-readonly
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: worker-readonly
+        name: "[内部] 只读子代理"
+        description: "内部只读预设（供规划器 / 复审器 / 低档调研子代理使用），物理禁写且省略全量 AGENTS.md 以节省 token。"
+        order: 90
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: |
+                你是 {{model}} 驱动的只读子代理（用于代码查证、架构规划、独立复审或资料调研）。
+                只读约束：仅允许读取文件、检索代码与抓取公开资料，严禁修改任何文件或配置。
+                收尾必须输出完整可见正文或按要求调用 structured_output；不要只思考不作答。
+              complete: true
+              includeRuntimeContext: false
+
+          - id: time-context
+            name: '@deepseek-ai/dsh-time-context'
+
+          - id: tool-fs
+            name: '@deepseek-ai/dsh-tool-fs'
+            config:
+              read: true
+              readImage: true
+              write: false
+              edit: false
+
+          - id: tool-fs-search
+            name: '@deepseek-ai/dsh-tool-fs-search'
+            config:
+              sampleOverCapGlobResults: false
+
+          - id: tool-web
+            name: '@deepseek-ai/dsh-tool-web'
+            config:
+              fetch: true
+              searchTimeoutMs: 60000
+
+          - id: tool-presentation
+            name: '@deepseek-ai/dsh-agent-tool-presentation'
+            config:
+              mode: ptc

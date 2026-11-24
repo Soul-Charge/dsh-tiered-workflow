@@ -39,6 +39,8 @@ window.__ModuleLoader__.load({
      * withSystemPrompt 表示该清单的条目多一个 systemPrompt 字段。
      */
     const LISTS = [
+      { key: 'planners', path: ['planners'], withSystemPrompt: true },
+      { key: 'reviewers', path: ['reviewers'], withSystemPrompt: true },
       { key: 'experts', path: ['experts'], withSystemPrompt: true },
       { key: 'low', path: ['delegates', 'low'], withSystemPrompt: false },
       { key: 'medium', path: ['delegates', 'medium'], withSystemPrompt: false },
@@ -46,26 +48,65 @@ window.__ModuleLoader__.load({
 
     /** 数值项：界面控件 ↔ Config 路径。 */
     const NUMBER_FIELDS = [
+      { key: 'stallToolThreshold', path: ['gates', 'stallToolThreshold'], min: 1, max: 1000, fallback: 20 },
+      { key: 'stallConsecutiveFailures', path: ['gates', 'stallConsecutiveFailures'], min: 1, max: 50, fallback: 3 },
+      { key: 'maxPlannerFollowups', path: ['workflow', 'maxPlannerFollowups'], min: 1, max: 20, fallback: 3 },
+      { key: 'maxReviewRetries', path: ['workflow', 'maxReviewRetries'], min: 0, max: 10, fallback: 2 },
       { key: 'maxTokens', path: ['maxTokens'], min: 1, max: 2000000, fallback: 8000 },
       { key: 'timeoutMs', path: ['timeoutMs'], min: 1000, max: 3600000, fallback: 150000 },
       { key: 'minPackageChars', path: ['minPackageChars'], min: 0, max: 200000, fallback: 600 },
       { key: 'reminderThreshold', path: ['reminder', 'threshold'], min: 1, max: 100000, fallback: 47 },
     ]
 
+    /** 开关项：工作流与三道硬门禁 + 兼容软提醒。 */
+    const BOOL_FIELDS = [
+      { key: 'workflowEnabled', path: ['workflow', 'enabled'], fallback: true },
+      { key: 'planGate', path: ['gates', 'planGate'], fallback: true },
+      { key: 'stallBreaker', path: ['gates', 'stallBreaker'], fallback: true },
+      { key: 'reviewGate', path: ['gates', 'reviewGate'], fallback: true },
+      { key: 'reminderEnabled', path: ['reminder', 'enabled'], fallback: true },
+    ]
+
+    /** 文本项：默认轨道与内部子代理预设 ID。 */
+    const TEXT_FIELDS = [
+      { key: 'defaultTrack', path: ['workflow', 'defaultTrack'], fallback: 'auto' },
+      { key: 'readonlyPreset', path: ['workflow', 'readonlyPreset'], fallback: '' },
+      { key: 'execPreset', path: ['workflow', 'execPreset'], fallback: '' },
+    ]
+
     // ── 文案（zh 必填，en 同键同义）─────────────────────────────────────────────
     const ZH = {
-      nav: '专家桥',
-      title: '专家桥（expert-bridge）',
+      nav: '分层工作流',
+      title: '分层工作流（dsh-tiered-workflow / expert-bridge）',
       intro:
-        '卡住时把按模板写好的求助包发给专家（ask_expert）；需要跑杂活时，用 delegate 把任务派给低档或中档子代理。' +
-        '三张清单里的模型都从这里选，选项来自 DSH 当前的模型目录。',
-      expertsTitle: '专家列表',
-      expertsDesc: 'ask_expert 按 need 匹配这些条目的 tags；没给 need 或没命中时用第一条配置完整的。',
-      lowTitle: '低档子代理',
-      lowDesc:
-        '做简单杂活的子代理。只读是**软约束**：委派时宿主只在子代理提示里写明「只读、不要写文件」，并没有强制限制工具——别指望它可靠地改文件。',
-      mediumTitle: '中档子代理',
-      mediumDesc: '能力接近主力的子代理：可以读写文件、跑命令，用于需要动手的委派。',
+        '按「后端 × 模型 × 推理强度（一模多档）」配置规划器、复审器、顾问与子代理池，并控制三道宿主级硬门禁（规划门禁 / §12 止损熔断 / 交付复审）。',
+      plannersTitle: '规划器列表（request_plan）',
+      plannersDesc: '带只读工具的独立规划子代理或外部后端（如 antigravity）。同一模型可配多条不同推理强度与档位（standard / deep）。',
+      reviewersTitle: '复审器列表（request_review）',
+      reviewersDesc: '新鲜隔离上下文的独立只读复审器，用于轨 B 调研来源核查与轨 C 工程验收。留空时回落规划器/专家列表。',
+      expertsTitle: '纯文本顾问列表（ask_expert）',
+      expertsDesc: '无需读大段代码的纯方向/审美/设计快问；按 need 匹配 tags，未命中取第一条可用。',
+      lowTitle: '低档子代理（delegate low）',
+      lowDesc: '便宜只读杂活池（自动附加只读约束与宿主 guard 硬防写，配了 readonlyPreset 时物理移除写工具）。',
+      mediumTitle: '中档子代理（delegate medium）',
+      mediumDesc: '能力接近主力的施工子代理：可读写文件、跑命令，用于边界清楚的独立子任务。',
+      fieldBackend: '执行后端',
+      fieldBackendHint: '默认 dsh-spawn；安装外部适配器插件后可填其 ID（如 antigravity）。',
+      fieldTier: '升级档位（tier）',
+      tierStandard: 'standard（常规标准档）',
+      tierDeep: 'deep（高推理/攻坚档）',
+      workflowTitle: '工作流与宿主硬门禁（V2）',
+      workflowEnabled: '启用分层工作流与门禁总开关',
+      planGate: '门禁 1 · 规划门禁（轨 C 未生成 plan.json 禁写文件）',
+      stallBreaker: '门禁 2 · §12 止损熔断门禁（到阈值硬阻断原地试错）',
+      reviewGate: '门禁 3 · 交付复审门禁（轨 B/C 未复审拦 present 与纯文本收尾）',
+      defaultTrack: '默认轨道（auto / A / B / C）',
+      readonlyPreset: '只读子代理预设 ID（如 worker-readonly，可空）',
+      execPreset: '施工子代理预设 ID（如 worker-exec，可空）',
+      stallToolThreshold: '止损步数阈值（工具调用次数，对齐 §12 默认 20）',
+      stallConsecutiveFailures: '失败熔断阈值（连续失败次数，对齐 §12 默认 3）',
+      maxPlannerFollowups: '同任务规划器最大续聊轮次（超限清零升档 deep）',
+      maxReviewRetries: '纯文本跳过复审最大拉回次数（防死循环）',
       listEmpty: '清单为空。点下面的「添加一条」开始配置。',
       addItem: '添加一条',
       moveUp: '上移',
@@ -122,18 +163,37 @@ window.__ModuleLoader__.load({
       saveHint: '写入走宿主的 settings.mutate，落在 profile 的 cordis.patch.yml 里。',
     }
     const EN = {
-      nav: 'Expert Bridge',
-      title: 'Expert Bridge (expert-bridge)',
+      nav: 'Tiered Workflow',
+      title: 'Tiered Workflow (dsh-tiered-workflow / expert-bridge)',
       intro:
-        'Send a template-shaped consult package to an expert (ask_expert) when stuck; use delegate to hand chores to a low or medium subagent. ' +
-        'Every model in the three lists is picked here, from the models DSH currently routes.',
-      expertsTitle: 'Experts',
-      expertsDesc: 'ask_expert matches these entries by tag against need; with no need (or no match) it takes the first fully configured one.',
-      lowTitle: 'Low-tier subagents',
-      lowDesc:
-        'A subagent for simple chores. Read-only is a SOFT constraint: on delegation the host only writes "read-only, do not write files" into the child prompt and does not restrict its tools. Do not expect it to edit files reliably.',
-      mediumTitle: 'Medium-tier subagents',
-      mediumDesc: 'A subagent about as capable as the main model: may read and write files and run commands.',
+        'Configure role pools by backend, model, and reasoning effort (multiple effort profiles per model), and toggle the three host-level hard gates.',
+      plannersTitle: 'Planners (request_plan)',
+      plannersDesc: 'Read-only planning subagents or external backends (e.g. antigravity). Same model can appear with different efforts and tiers (standard / deep).',
+      reviewersTitle: 'Reviewers (request_review)',
+      reviewersDesc: 'Fresh isolated read-only reviewers for Track B research and Track C engineering. Falls back to planners/experts if empty.',
+      expertsTitle: 'Text Advisors (ask_expert)',
+      expertsDesc: 'Sync text-only advisor for direction/design trade-offs; matches need against tags.',
+      lowTitle: 'Low-tier subagents (delegate low)',
+      lowDesc: 'Cheap read-only chore pool (protected by readonly guard + optional readonlyPreset).',
+      mediumTitle: 'Medium-tier subagents (delegate medium)',
+      mediumDesc: 'Capable execution subagents that may read/write files and run commands.',
+      fieldBackend: 'Execution backend',
+      fieldBackendHint: 'Default dsh-spawn; set an external adapter id (e.g. antigravity) when installed.',
+      fieldTier: 'Escalation tier',
+      tierStandard: 'standard (normal)',
+      tierDeep: 'deep (high-effort escalation)',
+      workflowTitle: 'Workflow & Host Hard Gates (V2)',
+      workflowEnabled: 'Enable tiered workflow & gates',
+      planGate: 'Gate 1 · Plan gate (block writes in Track C until plan.json exists)',
+      stallBreaker: 'Gate 2 · Stall breaker (§12 hard stop on tool/failure threshold)',
+      reviewGate: 'Gate 3 · Review gate (require review before present or plain-text end)',
+      defaultTrack: 'Default track (auto / A / B / C)',
+      readonlyPreset: 'Read-only subagent preset ID (e.g. worker-readonly, optional)',
+      execPreset: 'Execution subagent preset ID (e.g. worker-exec, optional)',
+      stallToolThreshold: 'Stall tool-call threshold (§12 default 20)',
+      stallConsecutiveFailures: 'Consecutive failure breaker (§12 default 3)',
+      maxPlannerFollowups: 'Max planner follow-up turns before deep reopen',
+      maxReviewRetries: 'Max turn-stopping review steers per turn',
       listEmpty: 'This list is empty. Use "Add entry" below to start.',
       addItem: 'Add entry',
       moveUp: 'Move up',
@@ -269,14 +329,20 @@ window.__ModuleLoader__.load({
     /** 一条清单项在草稿里的形状（tags 是文本，数字/文本都当字符串编辑）。 */
     function draftItem(source, withSystemPrompt) {
       const item = record(source)
+      const backend = str(item.backend).trim() || 'dsh-spawn'
+      const tier = str(item.tier).trim().toLowerCase() === 'deep' ? 'deep' : 'standard'
       return {
         name: str(item.name),
+        backend: backend,
         provider: str(item.provider),
         model: str(item.model),
         reasoningEffort: str(item.reasoningEffort),
+        maxTokens: typeof item.maxTokens === 'number' && Number.isFinite(item.maxTokens) ? item.maxTokens : 0,
+        tier: tier,
         tags: joinTags(Array.isArray(item.tags) ? item.tags : []),
         note: str(item.note),
         systemPrompt: withSystemPrompt === true ? str(item.systemPrompt) : '',
+        backendOptions: item.backendOptions && typeof item.backendOptions === 'object' ? cloneValue(item.backendOptions) : {},
       }
     }
 
@@ -284,11 +350,15 @@ window.__ModuleLoader__.load({
     function writeItem(item, withSystemPrompt) {
       const result = {
         name: str(item.name),
+        backend: str(item.backend).trim() || 'dsh-spawn',
         provider: str(item.provider),
         model: str(item.model),
         reasoningEffort: str(item.reasoningEffort),
+        maxTokens: typeof item.maxTokens === 'number' && Number.isFinite(item.maxTokens) ? item.maxTokens : 0,
+        tier: str(item.tier).trim().toLowerCase() === 'deep' ? 'deep' : 'standard',
         tags: splitTags(item.tags),
         note: str(item.note),
+        backendOptions: item.backendOptions && typeof item.backendOptions === 'object' ? item.backendOptions : {},
       }
       if (withSystemPrompt === true) result.systemPrompt = str(item.systemPrompt)
       return result
@@ -357,31 +427,54 @@ window.__ModuleLoader__.load({
         const raw = at(source, spec.path)
         const list = Array.isArray(raw) ? raw : []
         const items = list.map(function (item) { return draftItem(item, spec.withSystemPrompt) })
-        if (spec.key === 'experts') draft.experts = items
+        if (spec.path.length === 1) draft[spec.key] = items
         else draft.delegates[spec.key] = items
       }
       for (let index = 0; index < NUMBER_FIELDS.length; index += 1) {
         const spec = NUMBER_FIELDS[index]
         const current = at(source, spec.path)
-        draft[spec.key] = typeof current === 'number' && Number.isFinite(current) ? String(current) : ''
+        draft[spec.key] = typeof current === 'number' && Number.isFinite(current) ? String(current) : String(spec.fallback)
       }
-      draft.reminderEnabled = record(source.reminder).enabled === true
+      for (let index = 0; index < BOOL_FIELDS.length; index += 1) {
+        const spec = BOOL_FIELDS[index]
+        const current = at(source, spec.path)
+        draft[spec.key] = typeof current === 'boolean' ? current : spec.fallback
+      }
+      for (let index = 0; index < TEXT_FIELDS.length; index += 1) {
+        const spec = TEXT_FIELDS[index]
+        const current = at(source, spec.path)
+        draft[spec.key] = typeof current === 'string' ? current : spec.fallback
+      }
       return draft
     }
 
     function emptyItem(withSystemPrompt) {
-      return { name: '', provider: '', model: '', reasoningEffort: '', tags: '', note: '', systemPrompt: withSystemPrompt === true ? '' : '' }
+      return {
+        name: '',
+        backend: 'dsh-spawn',
+        provider: '',
+        model: '',
+        reasoningEffort: '',
+        maxTokens: 0,
+        tier: 'standard',
+        tags: '',
+        note: '',
+        systemPrompt: withSystemPrompt === true ? '' : '',
+        backendOptions: {},
+      }
     }
 
     /** 清单键 → 草稿里的数组。 */
     function listOf(draft, key) {
       if (draft === null) return []
-      if (key === 'experts') return Array.isArray(draft.experts) ? draft.experts : []
+      if (key === 'experts' || key === 'planners' || key === 'reviewers') {
+        return Array.isArray(draft[key]) ? draft[key] : []
+      }
       const delegates = record(draft.delegates)
       return Array.isArray(delegates[key]) ? delegates[key] : []
     }
     function setListOf(draft, key, items) {
-      if (key === 'experts') draft.experts = items
+      if (key === 'experts' || key === 'planners' || key === 'reviewers') draft[key] = items
       else draft.delegates[key] = items
     }
 
@@ -584,14 +677,25 @@ window.__ModuleLoader__.load({
         this.publish()
       }
 
-      setReminder(enabled) {
+      setBool(key, enabled) {
         if (this.editable() === false) return
-        this.draft.reminderEnabled = enabled === true
+        this.draft[key] = enabled === true
         this.notice = null
         this.publish()
       }
 
-      /** 逐条校验清单项：provider 与 model 必须同时给或同时空。 */
+      setText(key, value) {
+        if (this.editable() === false) return
+        this.draft[key] = str(value)
+        this.notice = null
+        this.publish()
+      }
+
+      setReminder(enabled) {
+        this.setBool('reminderEnabled', enabled)
+      }
+
+      /** 逐条校验清单项：默认 dsh-spawn 后端要求 provider 与 model 同时给或同时空；外部后端允许省略 provider。 */
       itemErrors() {
         const errors = Object.create(null)
         for (let index = 0; index < LISTS.length; index += 1) {
@@ -599,6 +703,8 @@ window.__ModuleLoader__.load({
           const list = listOf(this.draft, spec.key)
           for (let itemIndex = 0; itemIndex < list.length; itemIndex += 1) {
             const item = record(list[itemIndex])
+            const backend = str(item.backend).trim() || 'dsh-spawn'
+            if (backend !== 'dsh-spawn') continue
             const hasProvider = str(item.provider) !== ''
             const hasModel = str(item.model) !== ''
             if (hasProvider !== hasModel) errors[spec.key + ':' + itemIndex] = this.t('incompleteItem')
@@ -683,9 +789,19 @@ window.__ModuleLoader__.load({
           const previous = at(current, spec.path)
           if (previous !== parsed.value) ops.push({ op: 'set', path: spec.path, value: parsed.value })
         }
-        const previousEnabled = record(current.reminder).enabled === true
-        if (this.draft.reminderEnabled !== previousEnabled) {
-          ops.push({ op: 'set', path: ['reminder', 'enabled'], value: this.draft.reminderEnabled === true })
+        for (let index = 0; index < BOOL_FIELDS.length; index += 1) {
+          const spec = BOOL_FIELDS[index]
+          const previousRaw = at(current, spec.path)
+          const previous = typeof previousRaw === 'boolean' ? previousRaw : spec.fallback
+          const nextVal = this.draft[spec.key] === true
+          if (nextVal !== previous) ops.push({ op: 'set', path: spec.path, value: nextVal })
+        }
+        for (let index = 0; index < TEXT_FIELDS.length; index += 1) {
+          const spec = TEXT_FIELDS[index]
+          const previousRaw = at(current, spec.path)
+          const previous = typeof previousRaw === 'string' ? previousRaw : spec.fallback
+          const nextVal = str(this.draft[spec.key]).trim()
+          if (nextVal !== previous) ops.push({ op: 'set', path: spec.path, value: nextVal })
         }
         return { ops: ops, invalid: invalid }
       }
@@ -999,6 +1115,21 @@ window.__ModuleLoader__.load({
         textField('name', t('fieldName'), t('fieldNameHint'), false),
         textField('note', t('fieldNote'), t('fieldNoteHint'), false),
       ))
+      body.push(react.createElement('div', { key: 'backend-tier', style: STYLE.grid },
+        textField('backend', t('fieldBackend'), t('fieldBackendHint'), false),
+        react.createElement('div', { key: 'tier', style: STYLE.row },
+          react.createElement('label', { style: STYLE.label }, t('fieldTier')),
+          react.createElement('select', {
+            style: STYLE.control,
+            value: str(item.tier) === 'deep' ? 'deep' : 'standard',
+            disabled: disabled,
+            onChange: function (event) { onChange('tier', event.currentTarget.value) },
+          }, [
+            react.createElement('option', { key: 'standard', value: 'standard' }, t('tierStandard')),
+            react.createElement('option', { key: 'deep', value: 'deep' }, t('tierDeep')),
+          ]),
+        ),
+      ))
       body.push(react.createElement(RouteSelects, {
         key: 'route',
         t: t,
@@ -1100,11 +1231,13 @@ window.__ModuleLoader__.load({
         children.push(react.createElement('p', { key: 'catalog-failures', style: STYLE.err }, t('failuresPrefix') + names.join(', ')))
       }
 
-      // 三个清单
+      // 五张角色档位清单
       const sections = [
-        { spec: LISTS[0], title: t('expertsTitle'), desc: t('expertsDesc') },
-        { spec: LISTS[1], title: t('lowTitle'), desc: t('lowDesc') },
-        { spec: LISTS[2], title: t('mediumTitle'), desc: t('mediumDesc') },
+        { spec: LISTS[0], title: t('plannersTitle'), desc: t('plannersDesc') },
+        { spec: LISTS[1], title: t('reviewersTitle'), desc: t('reviewersDesc') },
+        { spec: LISTS[2], title: t('expertsTitle'), desc: t('expertsDesc') },
+        { spec: LISTS[3], title: t('lowTitle'), desc: t('lowDesc') },
+        { spec: LISTS[4], title: t('mediumTitle'), desc: t('mediumDesc') },
       ]
       for (let index = 0; index < sections.length; index += 1) {
         const section = sections[index]
@@ -1149,7 +1282,37 @@ window.__ModuleLoader__.load({
         react.createElement('div', { style: Object.assign({}, STYLE.row, { gap: '10px' }) }, numberRows),
       ))
 
-      // 提醒开关 + 阈值（阈值已在数值项里，这里只放开关）
+      // 工作流与三道硬门禁开关 + 预设绑定
+      const gateToggles = BOOL_FIELDS.filter(function (f) { return f.key !== 'reminderEnabled' }).map(function (spec) {
+        return react.createElement('label', { key: spec.key, style: STYLE.checkboxRow },
+          react.createElement('input', {
+            type: 'checkbox',
+            checked: draft === null ? spec.fallback : draft[spec.key] === true,
+            disabled: disabled,
+            onChange: function (event) { page.setBool(spec.key, event.currentTarget.checked) },
+          }),
+          react.createElement('span', { style: STYLE.label }, t(spec.key)),
+        )
+      })
+      const presetRows = TEXT_FIELDS.map(function (spec) {
+        return react.createElement('div', { key: spec.key, style: STYLE.row },
+          react.createElement('label', { style: STYLE.label }, t(spec.key)),
+          react.createElement('input', {
+            type: 'text',
+            style: STYLE.control,
+            value: draft === null ? spec.fallback : str(draft[spec.key]),
+            disabled: disabled,
+            onChange: function (event) { page.setText(spec.key, event.currentTarget.value) },
+          }),
+        )
+      })
+      children.push(react.createElement('div', { key: 'workflow-gates', style: STYLE.card },
+        react.createElement('p', { style: STYLE.cardTitle }, t('workflowTitle')),
+        react.createElement('div', { style: Object.assign({}, STYLE.row, { gap: '8px', marginBottom: '10px' }) }, gateToggles),
+        react.createElement('div', { style: Object.assign({}, STYLE.row, { gap: '10px' }) }, presetRows),
+      ))
+
+      // 提醒开关 + 阈值（仅在硬熔断关闭时作为兼容项）
       children.push(react.createElement('div', { key: 'reminder', style: STYLE.card },
         react.createElement('p', { style: STYLE.cardTitle }, t('reminder')),
         react.createElement('label', { style: STYLE.checkboxRow },
