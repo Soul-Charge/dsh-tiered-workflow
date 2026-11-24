@@ -51,15 +51,17 @@
 
 ```ts
 type ModelProfile = {
-  name: string              // 人类可读档位名，如 "opus-mid" / "opus-max" / "kimi-mid"
-  provider: string
-  model: string
-  reasoningEffort?: string  // 一等路由维度：low | medium | high | xhigh | max | ""
-  maxTokens?: number        // 单档输出上限覆盖（可选）
-  tier?: 'standard' | 'deep'// 升级阶梯标签：常规档 vs 攻坚档
-  tags: string[]            // 领域标签，如 ["规划", "诊断", "复审", "审美"]
+  name: string                            // 人类可读档位名，如 "opus-mid" / "opus-max" / "agy-planner"
+  backend?: string                        // 执行后端：默认 "dsh-spawn"；装入外部适配器后可选其 id（如 "antigravity"）
+  provider: string                        // dsh-spawn 必填；外部后端可留空或按后端约定填写
+  model: string                           // 模型标识（外部后端可选透传）
+  reasoningEffort?: string                // 一等路由维度：low | medium | high | xhigh | max | ""
+  maxTokens?: number                      // 单档输出上限覆盖（可选）
+  tier?: 'standard' | 'deep'              // 升级阶梯标签：常规档 vs 攻坚档
+  tags: string[]                          // 领域标签，如 ["规划", "诊断", "复审", "审美"]
   note?: string
-  systemPrompt?: string     // 仅顾问/规划/复审角色可选附加提示
+  systemPrompt?: string                   // 仅顾问/规划/复审角色可选附加提示
+  backendOptions?: Record<string, unknown>// 外部后端专属透传配置（如 approvalMode / addDirs）
 }
 ```
 
@@ -185,6 +187,22 @@ flowchart TD
 
 ---
 
+### 3.7 外部执行后端适配口（`ExternalBackendAdapter` v1）
+
+为支持将任务派发给外部 Agent 运行时（例如独立插件 [dsh-antigravity-adapter](https://github.com/Soul-Charge/dsh-antigravity-adapter)，或未来的其他 CLI/ACP Agent），主框架**不在代码内硬编码任何特定外部产品**，而是通过 Cordis 根服务 **`tieredWorkflow`** 暴露通用适配口：
+
+* **注册方式（软依赖，热插拔）**：外部插件通过 `ctx.inject(['tieredWorkflow'], (inner) => inner.tieredWorkflow.registerBackend(adapter))` 注册并持有返回的反注册 disposer。
+* **契约版本**：`contractVersion: 1`（与 `dsh-antigravity-adapter/docs/CONTRACT.md` 逐字段同步）：
+  * `ExternalBackendAdapter`：`{ contractVersion: 1, id, label, capabilities: { readonlyMode, structuredOutput, continuation, handoff, usageReporting }, healthCheck?(), run(req) }`
+  * `ExternalRunRequest`：`{ role: 'planner' | 'reviewer' | 'worker-low' | 'worker-medium' | 'handoff', cwd, prompt, readonly, outputSchema?, externalSessionId?, model?, reasoningEffort?, timeoutMs?, backendOptions?, signal, onProgress? }`
+  * `ExternalRunResult`：`{ stopReason: 'completed' | 'aborted' | 'error' | 'timeout', externalSessionId?, resumeHint?, text, structured?, usage?, durationMs, diagnostic? }`
+* **降级与交棒机制**：
+  1. **角色池透明路由**：当 `ModelProfile.backend` 指向已注册的外部后端 `id` 时，`request_plan` / `request_review` / `delegate` 自动通过 `adapter.run(...)` 调度，共用同一套 `plan.json`、门禁和 `workflow-metrics.jsonl`（若后端 `structuredOutput: false`，主框架自动退化为提取 `json` 代码块校验；若 `readonlyMode: false`，只读角色前显式提示或按配置拒绝）。
+  2. **外部续聊**：若 `adapter.capabilities.continuation === true`，Planner 续聊直接传入上次保存的 `externalSessionId`，复用外部持久会话。
+  3. **显式交棒工具 `dispatch_external`**：仅当至少存在一个已注册外部后端时向模型暴露，支持 `mode: 'run'`（派外执行拿结果回主线）与 `mode: 'handoff'`（打包当前上下文与 `plan.md` 开启外部持久会话，返回 `externalSessionId` 与 `resumeHint` 供人工直接接管）。
+
+---
+
 ## 4. 轻量状态机与可观测验收体系
 
 ### 4.1 会话状态文件
@@ -196,7 +214,7 @@ flowchart TD
   "sessionId": "session-xxxx",
   "track": "A | B | C",
   "planPath": "tasks/<slug>/plan.json",
-  "plannerChildId": "child-xxxx",
+  "plannerSession": { "backend": "dsh-spawn", "sessionId": "child-xxxx" },
   "plannerTurns": 1,
   "reviewCount": 0,
   "lastReviewVerdict": "none | pass | fail",
@@ -245,8 +263,8 @@ V2 通过全局 `ctx.on('session/event', ...)` 实时采集父子整树（按 `s
 
 ### 6.1 分三期小步落地
 
-* **Phase 1（探针验证 + 基座瘦身）**：完成 V1–V5 实测；落地 `core-v1` / `worker-readonly` / `worker-exec` 预设；修复 `finish` 日志 bug 与 `deepseek-official` 路由配置；设置页升级为支持「模型 × 推理强度（一模多档）」的角色池。
-* **Phase 2（核心工具闭环 + 观测）**：实现 `request_plan`（含可续聊 `plannerChildId` 与 3 轮上限）、`request_review`（含轨 B 代码预检 + 独立只读复审）、`plan.json` / `workflow-metrics.jsonl` 落盘，以及配套 GUI 配置项。
+* **Phase 1（探针验证 + 底座服务与角色池）**：V1–V5 已完成；落地 `core-v1` / `worker-readonly` / `worker-exec` 预设；修复 `finish.reason.kind` 与 6 维 `TokenUsage` 记账；暴露 `tieredWorkflow` Cordis 服务与 `ExternalBackendAdapter` v1 注册口；设置页升级为支持「后端 × 模型 × 推理强度（一模多档）」的角色池。
+* **Phase 2（核心工具闭环 + 交棒与观测）**：实现 `request_plan`（含 `dsh-spawn` V5-A 与外部后端续聊，3 轮上限）、`request_review`（含轨 B 代码预检 + 独立只读复审）、`dispatch_external`（外部运行/人工交棒）、`plan.json` / `workflow-metrics.jsonl` 落盘，以及配套 GUI 配置项。
 * **Phase 3（硬门禁上线 + 实测调优）**：依次开启止损熔断门禁 → 规划门禁 → 交付复审门禁与逃生阀；跑 4.3 节三类真实样本对照实测，按真实 token 与返工数据收口参数。
 
 ### 6.2 仓库改名策略（安全分步，不打断当前运行态）
