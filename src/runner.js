@@ -155,6 +155,28 @@ export class WorkflowRunner {
         backendOptions: route.backendOptions,
         signal
       })
+      if (res.stopReason !== 'completed') {
+        this._metrics.recordEvent('request_plan', {
+          rootSessionId,
+          role: 'planner',
+          mode: 'new',
+          backend: route.backend,
+          profileName: label,
+          externalSessionId: res.externalSessionId || '',
+          stopReason: res.stopReason || 'error',
+          ms: this._now() - started,
+          usage: res.usage
+        })
+        const err = new Error(
+          `[runner.runPlannerNew] target=${route.backend}:${label} error_code=EXTERNAL_PLANNER_FAILED: stopReason=${res.stopReason || 'error'} ${res.diagnostic || ''}`
+        )
+        err.code = 'EXTERNAL_PLANNER_FAILED'
+        err.operation = 'runner.runPlannerNew'
+        err.target = `${route.backend}:${label}`
+        err.input_summary = `mode=new backend=${route.backend}`
+        err.context = { stopReason: res.stopReason || 'error', diagnostic: res.diagnostic || '' }
+        throw err
+      }
       const planObj = this._extractValidPlan(res.structured, res.text, 'runPlannerNew:' + route.backend)
       const artifacts = writePlanArtifacts(planDir, planObj, {
         profile: label,
@@ -302,6 +324,28 @@ export class WorkflowRunner {
         backendOptions: route.backendOptions,
         signal
       })
+      if (res.stopReason !== 'completed') {
+        this._metrics.recordEvent('request_plan', {
+          rootSessionId: state.sessionId,
+          role: 'planner',
+          mode: 'followup',
+          backend: existing.backend,
+          profileName: label,
+          externalSessionId: res.externalSessionId || existing.sessionId,
+          stopReason: res.stopReason || 'error',
+          ms: this._now() - started,
+          usage: res.usage
+        })
+        const err = new Error(
+          `[runner.runPlannerFollowup] target=${existing.backend}:${label} error_code=EXTERNAL_PLANNER_FAILED: stopReason=${res.stopReason || 'error'} ${res.diagnostic || ''}`
+        )
+        err.code = 'EXTERNAL_PLANNER_FAILED'
+        err.operation = 'runner.runPlannerFollowup'
+        err.target = `${existing.backend}:${label}`
+        err.input_summary = `mode=followup backend=${existing.backend}`
+        err.context = { stopReason: res.stopReason || 'error', diagnostic: res.diagnostic || '' }
+        throw err
+      }
       const planObj = this._extractValidPlan(res.structured, res.text, 'runPlannerFollowup:' + existing.backend)
       const artifacts = writePlanArtifacts(planDir, planObj, {
         profile: label,
@@ -415,6 +459,27 @@ export class WorkflowRunner {
         backendOptions: route.backendOptions,
         signal
       })
+      if (res.stopReason !== 'completed') {
+        this._metrics.recordEvent('request_review', {
+          rootSessionId,
+          role: 'reviewer',
+          scope,
+          backend: route.backend,
+          profileName: label,
+          stopReason: res.stopReason || 'error',
+          ms: this._now() - started,
+          usage: res.usage
+        })
+        const err = new Error(
+          `[runner.runReviewer] target=${route.backend}:${label} error_code=EXTERNAL_REVIEWER_FAILED: stopReason=${res.stopReason || 'error'} ${res.diagnostic || ''}`
+        )
+        err.code = 'EXTERNAL_REVIEWER_FAILED'
+        err.operation = 'runner.runReviewer'
+        err.target = `${route.backend}:${label}`
+        err.input_summary = `scope=${scope} backend=${route.backend}`
+        err.context = { stopReason: res.stopReason || 'error', diagnostic: res.diagnostic || '' }
+        throw err
+      }
       const reviewObj = this._extractValidReview(res.structured, res.text, 'runReviewer:' + route.backend)
       this._metrics.recordEvent('request_review', {
         rootSessionId,

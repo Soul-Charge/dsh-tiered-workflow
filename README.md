@@ -1,8 +1,6 @@
-# dsh-tiered-workflow（compat package: `dsh-expert-bridge`）
+# dsh-tiered-workflow
 
-> 仓库已更名为 **`dsh-tiered-workflow`**；为兼容当前 DSH `web` profile 联接，npm 包名与设置命名空间暂保持 `dsh-expert-bridge` / `expert-bridge`，支持从 `0.2.x` 零配置破坏平滑升级。
-
-面向 DSH `>= 0.2.1-rc.2`（PTC 模式）的**低预算多模型分档分工与宿主级硬门禁工作流插件**（MIT，含 Web 设置页）。
+面向 DSH `>= 0.2.1-rc.2`（PTC 模式）的**低预算多模型分档分工与宿主级硬门禁工作流插件**（MIT，含 Web 设置页；设置命名空间 `tiered-workflow`）。
 
 * 完整架构蓝图：[docs/WORKFLOW-ARCHITECTURE.md](docs/WORKFLOW-ARCHITECTURE.md)
 * DSH `0.2.1-rc.2` 底层探针实测报告：[docs/PLATFORM-PROBES.md](docs/PLATFORM-PROBES.md)
@@ -56,16 +54,16 @@ test/
 
 1. 将本仓库装入 profile（`link:` 必须使用 **Windows 绝对路径**）：
    ```powershell
-   dsh plugin --profile web add link:F:/AiHarness/projects/dsh-expert-bridge
+   dsh plugin --profile web add link:F:/AiHarness/projects/dsh-tiered-workflow
    ```
    > 首次克隆需建立 `@deepseek-ai/schemastery` 目录联接：
    > ```powershell
-   > New-Item -ItemType Directory -Force 'F:/AiHarness/projects/dsh-expert-bridge/node_modules/@deepseek-ai'
+   > New-Item -ItemType Directory -Force 'F:/AiHarness/projects/dsh-tiered-workflow/node_modules/@deepseek-ai'
    > New-Item -ItemType Junction `
-   >   -Path 'F:/AiHarness/projects/dsh-expert-bridge/node_modules/@deepseek-ai/schemastery' `
+   >   -Path 'F:/AiHarness/projects/dsh-tiered-workflow/node_modules/@deepseek-ai/schemastery' `
    >   -Target 'C:/Program Files/nvm/v24.18.1/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/schemastery'
    > ```
-2. （推荐）将 `presets/*.patch.yml` 按需合入 `$DSH_HOME/profiles/web/cordis.patch.yml`，并在 `expert-bridge` 配置行补全路径字段（`workflow.stateDir`、`workflow.metricsLog`、`workflow.preambleFile`、`usageLog`、`debugLog`）。
+2. （推荐）将 `presets/*.patch.yml` 按需合入 `$DSH_HOME/profiles/web/cordis.patch.yml`，并在 `tiered-workflow` 配置行补全路径字段（`workflow.stateDir`、`workflow.metricsLog`、`workflow.preambleFile`、`usageLog`、`debugLog`）。
 3. 重启 `dsh web` 后，打开 **「设置 → 分层工作流」** 配置各角色档位池（支持同一模型配多条不同 `reasoningEffort` 与 `standard`/`deep` 档位）与硬门禁阈值。
 
 ---

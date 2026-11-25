@@ -1,4 +1,4 @@
-# dsh-tiered-workflow (compat id: expert-bridge) bundle layer
+# dsh-tiered-workflow bundle layer
 #
 # The row id doubles as the settings namespace: dsh-settings lists this entry's
 # volatile Config fields under `entry.options.id`, and the browser settings page
@@ -8,8 +8,8 @@
 # the repository. Fill them from the settings page (recommended) or override this
 # block in the profile patch.
 - insert:
-    - id: expert-bridge
-      name: dsh-expert-bridge
+    - id: tiered-workflow
+      name: dsh-tiered-workflow
       config:
         experts: []
         planners: []

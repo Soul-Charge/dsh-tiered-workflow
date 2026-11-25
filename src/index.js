@@ -1,4 +1,4 @@
-// dsh-tiered-workflow（当前运行包名兼容 dsh-expert-bridge）
+// dsh-tiered-workflow — DSH 多模型分档分工与宿主级硬门禁工作流框架
 //
 // 多模型分档分工与宿主级硬门禁工作流框架：
 //  * 一模多档角色池（模型 × reasoningEffort × backend × tag）
@@ -15,7 +15,7 @@ import { WorkflowRunner } from './runner.js'
 import { installWorkflowGates } from './gates.js'
 import { registerWorkflowTools } from './tools.js'
 
-export const name = 'expert-bridge'
+export const name = 'tiered-workflow'
 export const inject = ['tools']
 export { Config }
 
@@ -61,13 +61,19 @@ export function apply(ctx, config = {}) {
     })
   ]
 
-  // 卸载时清理全部监听与工具注册
-  if (typeof ctx.on === 'function') {
-    ctx.on('dispose', () => {
-      for (const d of disposers) {
-        try { d?.() } catch {}
-      }
-    })
+  // 卸载时清理全部监听与工具注册（@deepseek-ai/cordis v4 使用 ctx.effect 触发 teardown，mock 环境降级 ctx.on('dispose')）
+  let cleaned = false
+  const cleanup = () => {
+    if (cleaned) return
+    cleaned = true
+    for (const d of disposers) {
+      try { d?.() } catch {}
+    }
+  }
+  if (typeof ctx.effect === 'function') {
+    ctx.effect(() => cleanup)
+  } else if (typeof ctx.on === 'function') {
+    ctx.on('dispose', cleanup)
   }
 
   // 返回内部句柄方便自动化测试直接检视（Cordis 会忽略 apply 的普通对象返回值）

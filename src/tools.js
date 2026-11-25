@@ -292,6 +292,17 @@ export function registerWorkflowTools({ ctx, getConfig, backendRegistry, stateSt
           ms: Date.now() - started,
           usage: res.usage
         })
+        if (res.stopReason !== 'completed') {
+          const err = new Error(
+            `[tools.delegate] target=${route.backend}:${routeLabel(route)} error_code=EXTERNAL_DELEGATE_FAILED: stopReason=${res.stopReason || 'error'} ${res.diagnostic || ''}`
+          )
+          err.code = 'EXTERNAL_DELEGATE_FAILED'
+          err.operation = 'tools.delegate'
+          err.target = `${route.backend}:${routeLabel(route)}`
+          err.input_summary = `tier=${tier} backend=${route.backend}`
+          err.context = { stopReason: res.stopReason || 'error', diagnostic: res.diagnostic || '' }
+          throw err
+        }
         return {
           kind: 'external-completed',
           subagentId: res.externalSessionId || route.backend,

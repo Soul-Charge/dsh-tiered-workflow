@@ -27,12 +27,12 @@
 //   * loading / unavailable / 只读 / 目录为空 / 目录失败 / 保存被拒 / revision 冲突
 //     七种状态都有可见文案；不用 alert / confirm。
 window.__ModuleLoader__.load({
-  id: 'dsh-expert-bridge',
+  id: 'dsh-tiered-workflow',
   factory(require) {
     const react = require('react')
 
     /** 设置命名空间 = profile 里本插件的条目 id（与 host 的 Config 一一对应）。 */
-    const NS = 'expert-bridge'
+    const NS = 'tiered-workflow'
 
     /**
      * 三个可编辑清单。path 是 mutate 用的 Config 路径（整表替换），
@@ -77,7 +77,7 @@ window.__ModuleLoader__.load({
     // ── 文案（zh 必填，en 同键同义）─────────────────────────────────────────────
     const ZH = {
       nav: '分层工作流',
-      title: '分层工作流（dsh-tiered-workflow / expert-bridge）',
+      title: '分层工作流（tiered-workflow）',
       intro:
         '按「后端 × 模型 × 推理强度（一模多档）」配置规划器、复审器、顾问与子代理池，并控制三道宿主级硬门禁（规划门禁 / §12 止损熔断 / 交付复审）。',
       plannersTitle: '规划器列表（request_plan）',
@@ -146,7 +146,7 @@ window.__ModuleLoader__.load({
       catalogApiMissing:
         '当前宿主没有提供模型目录接口（remote.session.modelCatalog），无法列出可选模型；可继续在 cordis.patch.yml 里手填。',
       unavailable:
-        '宿主还没有提供 expert-bridge 这个设置命名空间：插件未安装、条目未启用或被组合拒绝时都是这个状态，重启 DSH 后再看。',
+        '宿主还没有提供 tiered-workflow 这个设置命名空间：插件未安装、条目未启用或被组合拒绝时都是这个状态，重启 DSH 后再看。',
       formLoading: '正在读取当前设置…',
       readonly: '当前设置文档为只读（部署层或命令行覆盖），页面不能写入。',
       invalidNumber: '必须是整数（minPackageChars 可为 0）',
@@ -164,7 +164,7 @@ window.__ModuleLoader__.load({
     }
     const EN = {
       nav: 'Tiered Workflow',
-      title: 'Tiered Workflow (dsh-tiered-workflow / expert-bridge)',
+      title: 'Tiered Workflow (tiered-workflow)',
       intro:
         'Configure role pools by backend, model, and reasoning effort (multiple effort profiles per model), and toggle the three host-level hard gates.',
       plannersTitle: 'Planners (request_plan)',
@@ -233,7 +233,7 @@ window.__ModuleLoader__.load({
       catalogApiMissing:
         'This host exposes no model catalog (remote.session.modelCatalog), so no options can be listed; you can still edit cordis.patch.yml by hand.',
       unavailable:
-        'The host does not serve the expert-bridge settings namespace yet: the plugin is not installed, its entry is disabled, or the composition rejected it. Restart DSH and look again.',
+        'The host does not serve the tiered-workflow settings namespace yet: the plugin is not installed, its entry is disabled, or the composition rejected it. Restart DSH and look again.',
       formLoading: 'Reading the current settings…',
       readonly: 'The settings document is read-only (deployment or command-line overlay), so this page cannot write.',
       invalidNumber: 'must be an integer (minPackageChars may be 0)',

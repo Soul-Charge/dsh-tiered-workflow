@@ -1,6 +1,6 @@
 {
-  "name": "dsh-expert-bridge",
-  "version": "0.3.0",
+  "name": "dsh-tiered-workflow",
+  "version": "0.3.1",
   "private": true,
   "description": "DSH plugin (dsh-tiered-workflow): tiered multi-model workflow with model x reasoningEffort profiles, continuable readonly planner, fresh reviewer, host-level hard gates, 6-field token metrics, ExternalBackendAdapter v1 port, and Web settings GUI.",
   "type": "module",

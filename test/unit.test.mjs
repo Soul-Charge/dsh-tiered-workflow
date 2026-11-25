@@ -10,11 +10,12 @@ import { extractFinishKind, normalizeUsage, MetricsRecorder } from '../src/metri
 import { WorkflowStateStore } from '../src/state.js'
 import { precheckResearchText } from '../src/research-check.js'
 import { extractJsonFromText, validatePlanObject, validateReviewObject, renderPlanMarkdown } from '../src/prompts.js'
+import { WorkflowRunner } from '../src/runner.js'
 import * as plugin from '../src/index.js'
 
 test('exports: pure named exports without default export (Cordis Config safety)', () => {
   assert.equal('default' in plugin, false)
-  assert.equal(plugin.name, 'expert-bridge')
+  assert.equal(plugin.name, 'tiered-workflow')
   assert.deepEqual(plugin.inject, ['tools'])
   assert.equal(typeof plugin.Config, 'function')
   assert.equal(typeof plugin.apply, 'function')
@@ -310,4 +311,75 @@ test('client.js: loads in fake __ModuleLoader__, edits planners + hard gates, an
   assert.deepEqual(plannerOp.value[0].tags, ['大工程', '架构'])
 
   delete globalThis.window
+})
+
+test('WorkflowRunner & plugin.apply: propagates external stopReason errors and registers Cordis v4 effect teardown', async () => {
+  const reg = new ExternalBackendRegistry()
+  reg.registerBackend({
+    contractVersion: EXTERNAL_BACKEND_CONTRACT_VERSION,
+    id: 'antigravity',
+    label: 'Antigravity',
+    capabilities: { readonlyMode: true, structuredOutput: true, continuation: true, handoff: true, usageReporting: true },
+    async run() {
+      return { stopReason: 'timeout', text: '', diagnostic: 'agy timed out after 5000ms' }
+    }
+  })
+  const recorded = []
+  const fakeMetrics = { recordEvent: (kind, payload) => recorded.push({ kind, payload }), tagSession: () => {} }
+  const runner = new WorkflowRunner({ ctx: {}, backendRegistry: reg, metrics: fakeMetrics, stateStore: null })
+  const liveConfig = readLiveConfig(Config({}))
+
+  await assert.rejects(
+    () => runner.runPlannerNew({
+      parent: null,
+      rootSessionId: 's1',
+      route: { name: 'agy-p', backend: 'antigravity', model: '', reasoningEffort: '', systemPrompt: '', backendOptions: {} },
+      goal: 'test timeout',
+      pointers: [],
+      priorFalsified: [],
+      cwd: process.cwd(),
+      planDir: '',
+      liveConfig
+    }),
+    (err) => err.code === 'EXTERNAL_PLANNER_FAILED' && /stopReason=timeout/.test(err.message) && /agy timed out/.test(err.message)
+  )
+
+  await assert.rejects(
+    () => runner.runReviewer({
+      parent: null,
+      rootSessionId: 's1',
+      route: { name: 'agy-r', backend: 'antigravity', model: '', reasoningEffort: '', systemPrompt: '', backendOptions: {} },
+      scope: 'engineering',
+      originalGoal: 'g',
+      plan: null,
+      summary: 's',
+      artifactPaths: [],
+      commandEvidence: '',
+      precheckWarnings: [],
+      cwd: process.cwd(),
+      liveConfig
+    }),
+    (err) => err.code === 'EXTERNAL_REVIEWER_FAILED' && /stopReason=timeout/.test(err.message)
+  )
+  assert.equal(recorded.length, 2)
+  assert.equal(recorded[0].payload.stopReason, 'timeout')
+
+  // Verify plugin.apply uses ctx.effect for Cordis v4 teardown
+  let effectCleanup = null
+  let toolDisposedCount = 0
+  const fakeCtx = {
+    provide: () => {},
+    set: () => {},
+    get: () => undefined,
+    on: () => () => {},
+    effect: (fn) => { effectCleanup = fn() },
+    tools: {
+      register: () => () => { toolDisposedCount += 1 },
+      guard: () => () => {}
+    }
+  }
+  plugin.apply(fakeCtx, {})
+  assert.equal(typeof effectCleanup, 'function')
+  effectCleanup()
+  assert.ok(toolDisposedCount >= 4)
 })
